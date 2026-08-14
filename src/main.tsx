@@ -37,6 +37,7 @@ import MushroomVillage from "./page/website/dashboard/MushroomVillage";
 import BackendUpload from "./page/website/dashboard/BackendUpload";
 import CompoundReferrals from "./page/website/dashboard/CompoundReferrals";
 import FarmManagement from "./page/group-farm/FarmManagement";
+import GreenCardCommunity from "./page/website/dashboard/GreenCardCommunity";
 import { Analytics } from "@vercel/analytics/react";
 
 Sentry.init({
@@ -108,6 +109,7 @@ const route = createBrowserRouter([
           { path: "courses/:slug", element: <SingleCoursePage /> },
           { path: "profile", element: <ProfileComponent /> },
           { path: "slots-subscription", element: <MonthlyPayment /> },
+          { path: "green-card", element: <GreenCardCommunity /> },
           // { path: "withdrawals", element: <Withdrawals /> }, // Hidden for now
           { path: "group-farm-accounts", element: <FarmRecordsView /> },
           { path: "create-farm-group", element: <CreateFarmGroup /> },

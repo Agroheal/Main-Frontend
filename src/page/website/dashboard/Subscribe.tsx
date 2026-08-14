@@ -20,8 +20,10 @@ declare global {
   }
 }
 
+const GREEN_CARD_FEE = 1000;
+const LIFETIME_YEARS = 100;
+
 const Subscribe = () => {
-  const SubscribeFee = 2000;
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
   const [user, setUser] = useState<any>(null);
@@ -84,7 +86,7 @@ const Subscribe = () => {
       window.FlutterwaveCheckout({
         public_key: FLUTTERWAVE_KEYS,
         tx_ref: reference,
-        amount: SubscribeFee,
+        amount: GREEN_CARD_FEE,
         currency: "NGN",
         payment_options: "card, banktransfer, ussd",
         customer: {
@@ -93,11 +95,11 @@ const Subscribe = () => {
         },
         meta: {
           user_id: user.id,
-          plan: "platform",
+          plan: "green_card",
         },
         customizations: {
-          title: "Agroheal Platform Access",
-          description: "Yearly subscription — full platform access",
+          title: "Agroheal Green Card",
+          description: "Green Card — join the LEAP Community & platform",
           logo: "https://ptowfacejneezksyhntk.supabase.co/storage/v1/object/sign/agroheal-%20buckets/logo.png?token=eyJraWQiOiJzdG9yYWdlLXVybC1zaWduaW5nLWtleV9iZGE2NjM1ZS00NTAzLTRkZDktOTdmOS0zYWExY2Y5NzNiOGQiLCJhbGciOiJIUzI1NiJ9.eyJ1cmwiOiJhZ3JvaGVhbC0gYnVja2V0cy9sb2dvLnBuZyIsImlhdCI6MTc3NDAwODY3OCwiZXhwIjo0OTI3NjA4Njc4fQ.fuwva3-hMj5KmMRqElcclgJqzA5d4aigxCIlHVHgMak",
         },
         onclose: () => setLoading(false),
@@ -120,7 +122,7 @@ const Subscribe = () => {
             const run = async () => {
               const now = new Date();
               const expiresAt = new Date();
-              expiresAt.setFullYear(expiresAt.getFullYear() + 1);
+              expiresAt.setFullYear(expiresAt.getFullYear() + LIFETIME_YEARS);
 
               const { error: subError } = await supabase
                 .from("subscriptions")
@@ -128,6 +130,7 @@ const Subscribe = () => {
                   [
                     {
                       user_id: user.id,
+                      plan: "green_card",
                       status: "active",
                       started_at: now.toISOString(),
                       expires_at: expiresAt.toISOString(),
@@ -223,7 +226,7 @@ const Subscribe = () => {
             localStorage.getItem("pending_payment_referral_code") || undefined;
           const now = new Date();
           const expiresAt = new Date();
-          expiresAt.setFullYear(expiresAt.getFullYear() + 1);
+          expiresAt.setFullYear(expiresAt.getFullYear() + LIFETIME_YEARS);
 
           const { error: subError } = await supabase
             .from("subscriptions")
@@ -231,6 +234,7 @@ const Subscribe = () => {
               [
                 {
                   user_id: pendingUserId,
+                  plan: "green_card",
                   status: "active",
                   started_at: now.toISOString(),
                   expires_at: expiresAt.toISOString(),
@@ -352,12 +356,13 @@ const Subscribe = () => {
         localStorage.getItem("pending_payment_referral_code") || undefined;
       const now = new Date();
       const expiresAt = new Date();
-      expiresAt.setFullYear(expiresAt.getFullYear() + 1);
+      expiresAt.setFullYear(expiresAt.getFullYear() + LIFETIME_YEARS);
 
       const { error: subError } = await supabase.from("subscriptions").upsert(
         [
           {
             user_id: session.user.id,
+            plan: "green_card",
             status: "active",
             started_at: now.toISOString(),
             expires_at: expiresAt.toISOString(),
@@ -614,7 +619,7 @@ const Subscribe = () => {
                     {/* Badge */}
                     <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-green-700 bg-green-50 px-2.5 py-1 rounded-full mb-5">
                       <Crown className="w-3 h-3" />
-                      Yearly subscription
+                      Green Card
                     </span>
 
                     {/* Price */}
@@ -624,9 +629,11 @@ const Subscribe = () => {
                       </p>
                       <div className="flex items-baseline gap-1">
                         <span className="text-4xl font-bold text-gray-900">
-                          ₦2,000
+                          ₦1,000
                         </span>
-                        <span className="text-sm text-gray-400">/ year</span>
+                        <span className="text-sm text-gray-400">
+                          one-time
+                        </span>
                       </div>
                     </div>
 
@@ -852,8 +859,8 @@ const PaymentSuccess = ({ isOpen, userName }: PaymentSuccessProps) => {
                       Platform access activated
                     </p>
                     <p className="text-xs text-gray-500 mt-0.5">
-                      Your yearly subscription is now live. Explore courses,
-                      manage your farm slot, and start earning with referrals.
+                      Your Green Card is now active. Explore courses, manage
+                      your farm slot, and start building your community.
                     </p>
                   </div>
                 </div>

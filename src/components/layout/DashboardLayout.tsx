@@ -15,6 +15,7 @@ import {
   BookOpen,
   Users,
   Database,
+  IdCard,
 } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
 import { motion, AnimatePresence } from "framer-motion";
@@ -23,6 +24,7 @@ const normalizePath = (path: string) => path.replace(/\/+$/, "") || "/";
 
 const navItems = [
   { label: "Dashboard", path: "/dashboard", icon: LayoutDashboard },
+  { label: "Green Card Community", path: "/dashboard/green-card", icon: IdCard },
   { label: "Courses", path: "/dashboard/courses", icon: ScrollText },
   { label: "Secure Practice Slot", path: "/dashboard/slots", icon: Sprout },
   {

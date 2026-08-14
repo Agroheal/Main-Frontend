@@ -92,15 +92,15 @@ serve(async (req) => {
       );
     }
 
-    // ── Create subscription in DB ─────────────────────────
+    // ── Create Green Card (lifetime access) in DB ─────────
     const now = new Date();
     const expires = new Date();
-    expires.setDate(now.getDate() + 365);
+    expires.setFullYear(now.getFullYear() + 100);
 
     const { error: subError } = await supabase.from("subscriptions").upsert(
       {
         user_id: userId,
-        plan: "platform",
+        plan: "green_card",
         status: "active",
         started_at: now.toISOString(),
         expires_at: expires.toISOString(),

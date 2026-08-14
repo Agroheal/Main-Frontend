@@ -49,12 +49,12 @@ Deno.serve(async (req) => {
 
       const now = new Date();
       const expires = new Date();
-      expires.setDate(now.getDate() + 365);
+      expires.setFullYear(now.getFullYear() + 100);
 
       await supabase.from("subscriptions").upsert(
         {
           user_id: userId,
-          plan: "platform",
+          plan: "green_card",
           status: "active",
           started_at: now.toISOString(),
           expires_at: expires.toISOString(),

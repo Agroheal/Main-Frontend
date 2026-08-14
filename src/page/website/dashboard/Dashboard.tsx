@@ -536,11 +536,11 @@ const Dashboard = () => {
                   </div>
                   <div>
                     <h3 className="font-semibold text-gray-900 text-sm">
-                      Platform Subscription
+                      Green Card
                     </h3>
                     <p className="text-xs text-gray-500">
-                      {otherSubscriptions.platform.expiryDate
-                        ? `Expires ${otherSubscriptions.platform.expiryDate.toLocaleDateString()}`
+                      {otherSubscriptions.platform.status === "active"
+                        ? "Lifetime access to all courses"
                         : "Access to all courses"}
                     </p>
                   </div>
@@ -1015,7 +1015,7 @@ const Dashboard = () => {
                     <div className="flex items-center gap-3">
                       <BookOpen className="w-4 h-4 text-green-800" />
                       <span className="text-sm font-medium text-gray-700">
-                        Platform Subscription
+                        Green Card
                       </span>
                     </div>
                     <span className="text-[10px] font-bold text-red-600 uppercase px-2 py-0.5 bg-red-50 rounded-full">

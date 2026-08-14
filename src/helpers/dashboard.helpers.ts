@@ -12,8 +12,8 @@ export const benefits = [
   },
   {
     icon: Shield,
-    title: "Yearly Access",
-    description: "One payment, to access your dashboard for one year",
+    title: "Lifetime Access",
+    description: "One payment, permanent access to your dashboard",
   },
 ];
 
