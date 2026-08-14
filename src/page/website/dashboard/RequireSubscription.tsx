@@ -20,6 +20,7 @@ export default function RequireSubscription({ children }: any) {
         .select("expires_at")
         .eq("user_id", user.id)
         .eq("status", "active")
+        .eq("plan", "green_card")
         .order("expires_at", { ascending: false })
         .limit(1)
         .maybeSingle();
