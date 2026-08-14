@@ -168,11 +168,6 @@ const Login = () => {
               </div>
             </div>
 
-            <p className="text-sm text-red-600">
-              New users should check their email (or spam) to verify their
-              accounts before the first login.
-            </p>
-
             {/* Submit */}
             <div className="pt-1">
               <Button

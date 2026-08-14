@@ -12,7 +12,6 @@ import Error from "./page/error/Error";
 import About from "./page/website/About";
 import Login from "./page/website/Login";
 import Signup from "./page/website/Signup";
-import VerifyAccount from "./page/website/VerifyAccount";
 import Slots from "./page/website/Slots/Slots";
 import Courses from "./page/website/Courses/Courses";
 import Dashboard from "./page/website/dashboard/Dashboard";
@@ -64,7 +63,6 @@ const route = createBrowserRouter([
       { path: "about", element: <About /> },
       { path: "login", element: <Login /> },
       { path: "signup", element: <Signup /> },
-      { path: "verify-account", element: <VerifyAccount /> },
       { path: "legal", element: <Legal /> },
       { path: "forgot-password", element: <ForgotPasswordForm /> },
       { path: "reset-password", element: <UpdatePasswordForm /> },

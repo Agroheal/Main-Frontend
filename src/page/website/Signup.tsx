@@ -97,12 +97,12 @@ const Signup = () => {
     showToast({
       variant: "success",
       title: "Signup successful!",
-      description: "Check your email to verify your account.",
+      description: "Your account has been created.",
     });
 
     Sentry.metrics.count("signup_completed", 1);
     setTimeout(() => {
-      navigate("/verify-account");
+      navigate("/dashboard");
     }, 1000);
   };
 

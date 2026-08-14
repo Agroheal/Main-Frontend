@@ -21,7 +21,6 @@ const Layout = () => {
   const HIDDENROURES = [
     "/login",
     "/signup",
-    "/verify-account",
     "/forgot-password",
     "/reset-password",
   ];
