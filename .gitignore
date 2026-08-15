@@ -25,3 +25,5 @@ dist-ssr
 
 #env ignore
 .env
+.env.example
+supabase/.temp/linked-project.json
