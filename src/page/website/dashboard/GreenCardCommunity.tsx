@@ -98,9 +98,22 @@ const GreenCardCommunity = () => {
         });
       }
 
-      setReferralCode(profile?.referral_code ?? null);
       setFullName(profile?.full_name ?? "Agroheal Member");
       setCommunitySize(typeof size === "number" ? size : 1);
+
+      if (profile?.referral_code) {
+        setReferralCode(profile.referral_code);
+      } else {
+        const { data: newReferralCode, error: referralCodeError } =
+          await supabase.rpc("get_or_create_referral_code", {
+            p_user_id: user.id,
+          });
+        if (referralCodeError) {
+          console.error("Referral code assignment failed", referralCodeError);
+        } else if (typeof newReferralCode === "string") {
+          setReferralCode(newReferralCode);
+        }
+      }
 
       if (profile?.member_id) {
         setMemberId(profile.member_id);
