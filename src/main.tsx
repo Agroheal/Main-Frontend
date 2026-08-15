@@ -91,6 +91,7 @@ const route = createBrowserRouter([
     ),
     children: [
       { path: "/subscribe", element: <Subscribe /> },
+      { path: "/dashboard/green-card", element: <GreenCardCommunity /> },
 
       // subscription protected area
       {
@@ -109,7 +110,6 @@ const route = createBrowserRouter([
           { path: "courses/:slug", element: <SingleCoursePage /> },
           { path: "profile", element: <ProfileComponent /> },
           { path: "slots-subscription", element: <MonthlyPayment /> },
-          { path: "green-card", element: <GreenCardCommunity /> },
           // { path: "withdrawals", element: <Withdrawals /> }, // Hidden for now
           { path: "group-farm-accounts", element: <FarmRecordsView /> },
           { path: "create-farm-group", element: <CreateFarmGroup /> },

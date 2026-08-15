@@ -38,9 +38,14 @@ Deno.serve(async (req) => {
 
   // ── Handle events ─────────────────────────────────────
   switch (event.event) {
-    // Subscription renewed
+    // Green Card purchase — only ever fires for payments explicitly
+    // tagged as a Green Card purchase (metadata.plan === "green_card").
+    // Any other Paystack charge (slots, other payments, etc.) is ignored
+    // here so it can never grant Green Card access as a side effect.
     case "charge.success": {
-      const { reference, amount, customer, metadata } = event.data;
+      const { reference, amount, metadata } = event.data;
+      if (metadata?.plan !== "green_card") break;
+
       const userId = metadata?.custom_fields?.find(
         (f: any) => f.variable_name === "user_id",
       )?.value;
@@ -77,9 +82,12 @@ Deno.serve(async (req) => {
       break;
     }
 
-    // Payment failed
+    // Green Card payment failed — same explicit-tag guard as above, so a
+    // failed unrelated charge never expires someone's real Green Card.
     case "charge.failed": {
-      const { customer, metadata } = event.data;
+      const { metadata } = event.data;
+      if (metadata?.plan !== "green_card") break;
+
       const userId = metadata?.custom_fields?.find(
         (f: any) => f.variable_name === "user_id",
       )?.value;

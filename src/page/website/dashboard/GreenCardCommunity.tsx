@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Toaster } from "react-hot-toast";
-import { Sprout, Users, Copy, PartyPopper } from "lucide-react";
+import { Sprout, Users, Copy, PartyPopper, IdCard, Lock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { showToast } from "@/components/ui/ToastComponent";
 import { supabase } from "@/lib/supabaseClient";
@@ -11,6 +11,7 @@ const TIER_SIZE = 50;
 const GreenCardCommunity = () => {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
+  const [hasGreenCard, setHasGreenCard] = useState(false);
   const [referralCode, setReferralCode] = useState<string | null>(null);
   const [communitySize, setCommunitySize] = useState<number>(1);
 
@@ -24,6 +25,25 @@ const GreenCardCommunity = () => {
         navigate("/login");
         return;
       }
+
+      const { data: greenCard } = await supabase
+        .from("subscriptions")
+        .select("expires_at")
+        .eq("user_id", user.id)
+        .eq("status", "active")
+        .eq("plan", "green_card")
+        .maybeSingle();
+
+      const isActive =
+        !!greenCard && new Date(greenCard.expires_at) > new Date();
+
+      if (!isActive) {
+        setHasGreenCard(false);
+        setLoading(false);
+        return;
+      }
+
+      setHasGreenCard(true);
 
       const [{ data: profile }, { data: size, error: sizeError }] =
         await Promise.all([
@@ -92,6 +112,33 @@ const GreenCardCommunity = () => {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <p className="text-gray-500 text-sm">Loading your community...</p>
+      </div>
+    );
+  }
+
+  if (!hasGreenCard) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
+        <div className="w-full max-w-md rounded-2xl border border-gray-200 bg-white p-8 shadow-sm text-center">
+          <div className="w-14 h-14 rounded-2xl bg-green-50 flex items-center justify-center mx-auto mb-5">
+            <Lock className="w-6 h-6 text-green-700" />
+          </div>
+          <h1 className="text-xl font-semibold text-gray-900 mb-2">
+            Get your Green Card to unlock this
+          </h1>
+          <p className="text-sm text-gray-500 mb-6">
+            Your Green Card Community — your affiliate link, member count,
+            and free ginger seedling progress — unlocks once you secure your
+            Agroheal Green Card.
+          </p>
+          <Button
+            onClick={() => navigate("/subscribe")}
+            className="w-full h-11 bg-green-800 text-white hover:bg-green-700 rounded-xl font-semibold"
+          >
+            <IdCard className="w-4 h-4 mr-2" />
+            Get your Green Card — ₦1,000
+          </Button>
+        </div>
       </div>
     );
   }
