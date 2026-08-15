@@ -1,18 +1,44 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Toaster } from "react-hot-toast";
-import { Sprout, Users, Copy, PartyPopper, IdCard, Lock } from "lucide-react";
+import { toPng } from "html-to-image";
+import {
+  Sprout,
+  Users,
+  Copy,
+  PartyPopper,
+  IdCard,
+  Lock,
+  Download,
+  Share2,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { showToast } from "@/components/ui/ToastComponent";
 import { supabase } from "@/lib/supabaseClient";
+import GreenCardImage from "@/components/webComponents/GreenCardImage";
 
 const TIER_SIZE = 50;
+const CARD_FILENAME = "agroheal-green-card.png";
+
+const downloadBlob = (blob: Blob, filename: string) => {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
+};
 
 const GreenCardCommunity = () => {
   const navigate = useNavigate();
+  const cardRef = useRef<HTMLDivElement>(null);
   const [loading, setLoading] = useState(true);
   const [hasGreenCard, setHasGreenCard] = useState(false);
+  const [generatingCard, setGeneratingCard] = useState(false);
   const [referralCode, setReferralCode] = useState<string | null>(null);
+  const [fullName, setFullName] = useState<string>("");
+  const [memberId, setMemberId] = useState<string>("");
+  const [memberSince, setMemberSince] = useState<string>("");
   const [communitySize, setCommunitySize] = useState<number>(1);
 
   useEffect(() => {
@@ -28,7 +54,7 @@ const GreenCardCommunity = () => {
 
       const { data: greenCard } = await supabase
         .from("subscriptions")
-        .select("expires_at")
+        .select("expires_at, started_at")
         .eq("user_id", user.id)
         .eq("status", "active")
         .eq("plan", "green_card")
@@ -44,12 +70,18 @@ const GreenCardCommunity = () => {
       }
 
       setHasGreenCard(true);
+      setMemberSince(
+        new Date(greenCard.started_at).toLocaleDateString("en-US", {
+          month: "long",
+          year: "numeric",
+        }),
+      );
 
       const [{ data: profile }, { data: size, error: sizeError }] =
         await Promise.all([
           supabase
             .from("profiles")
-            .select("referral_code")
+            .select("referral_code, full_name, member_id")
             .eq("id", user.id)
             .maybeSingle(),
           supabase.rpc("get_green_card_community_size", {
@@ -67,7 +99,24 @@ const GreenCardCommunity = () => {
       }
 
       setReferralCode(profile?.referral_code ?? null);
+      setFullName(profile?.full_name ?? "Agroheal Member");
       setCommunitySize(typeof size === "number" ? size : 1);
+
+      if (profile?.member_id) {
+        setMemberId(profile.member_id);
+      } else {
+        const { data: newMemberId, error: memberIdError } =
+          await supabase.rpc("get_or_create_green_card_member_id", {
+            p_user_id: user.id,
+            p_join_year: new Date(greenCard.started_at).getFullYear(),
+          });
+        if (memberIdError) {
+          console.error("Member ID assignment failed", memberIdError);
+        } else if (typeof newMemberId === "string") {
+          setMemberId(newMemberId);
+        }
+      }
+
       setLoading(false);
     };
 
@@ -77,6 +126,67 @@ const GreenCardCommunity = () => {
   const referralLink = referralCode
     ? `${window.location.origin}/signup?ref=${referralCode}`
     : "";
+
+  const generateCardBlob = async (): Promise<Blob | null> => {
+    if (!cardRef.current) return null;
+    const dataUrl = await toPng(cardRef.current, { pixelRatio: 2 });
+    const response = await fetch(dataUrl);
+    return response.blob();
+  };
+
+  const handleDownloadCard = async () => {
+    setGeneratingCard(true);
+    try {
+      const blob = await generateCardBlob();
+      if (!blob) return;
+      downloadBlob(blob, CARD_FILENAME);
+    } catch (error) {
+      console.error("Card download failed", error);
+      showToast({
+        variant: "error",
+        title: "Couldn't generate your card",
+        description: "Please try again.",
+      });
+    } finally {
+      setGeneratingCard(false);
+    }
+  };
+
+  const handleShareCard = async () => {
+    setGeneratingCard(true);
+    try {
+      const blob = await generateCardBlob();
+      if (!blob) return;
+      const file = new File([blob], CARD_FILENAME, { type: "image/png" });
+
+      if (navigator.canShare?.({ files: [file] })) {
+        await navigator.share({
+          files: [file],
+          title: "My Agroheal Green Card",
+          text: "Join my Agroheal Green Card Community!",
+        });
+      } else {
+        downloadBlob(blob, CARD_FILENAME);
+        showToast({
+          variant: "success",
+          title: "Card downloaded",
+          description:
+            "Sharing isn't supported on this browser — share the downloaded image from your files.",
+        });
+      }
+    } catch (error) {
+      if ((error as Error)?.name !== "AbortError") {
+        console.error("Card share failed", error);
+        showToast({
+          variant: "error",
+          title: "Couldn't share your card",
+          description: "Please try again.",
+        });
+      }
+    } finally {
+      setGeneratingCard(false);
+    }
+  };
 
   const tiersUnlocked = Math.floor(communitySize / TIER_SIZE);
   const progressInTier = communitySize % TIER_SIZE;
@@ -156,6 +266,37 @@ const GreenCardCommunity = () => {
             holders in your community (including you) unlocks a round of free
             ginger seedlings for everyone in it.
           </p>
+        </div>
+
+        <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
+          <div className="overflow-x-auto pb-2">
+            <GreenCardImage
+              ref={cardRef}
+              fullName={fullName}
+              memberId={memberId || "AGC-PENDING"}
+              memberSince={memberSince}
+              referralLink={referralLink}
+            />
+          </div>
+          <div className="flex flex-col sm:flex-row gap-2 mt-4">
+            <Button
+              onClick={handleDownloadCard}
+              disabled={generatingCard}
+              className="flex-1 h-11 bg-green-800 text-white hover:bg-green-700 rounded-xl"
+            >
+              <Download className="w-4 h-4 mr-2" />
+              Download
+            </Button>
+            <Button
+              onClick={handleShareCard}
+              disabled={generatingCard}
+              variant="outline"
+              className="flex-1 h-11 rounded-xl"
+            >
+              <Share2 className="w-4 h-4 mr-2" />
+              Share
+            </Button>
+          </div>
         </div>
 
         <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">

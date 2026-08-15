@@ -67,6 +67,14 @@ Deno.serve(async (req) => {
         { onConflict: "user_id" },
       );
 
+      const { error: memberIdError } = await supabase.rpc(
+        "get_or_create_green_card_member_id",
+        { p_user_id: userId, p_join_year: now.getFullYear() },
+      );
+      if (memberIdError) {
+        console.error("Member ID assignment failed:", memberIdError);
+      }
+
       try {
         await supabase.from("payment_logs").insert({
           user_id: userId,

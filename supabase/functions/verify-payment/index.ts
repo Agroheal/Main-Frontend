@@ -137,6 +137,15 @@ serve(async (req) => {
       );
     }
 
+    // ── Assign Green Card member ID (first purchase only) ──
+    const { error: memberIdError } = await supabase.rpc(
+      "get_or_create_green_card_member_id",
+      { p_user_id: userId, p_join_year: now.getFullYear() },
+    );
+    if (memberIdError) {
+      console.error("Member ID assignment failed:", memberIdError);
+    }
+
     // ── Apply referral ────────────────────────────────────
     if (referralCode) {
       const { data: profile } = await supabase
