@@ -15,6 +15,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
+import { SITE_URL } from "@/config/Index";
 import { Toaster, toast } from "react-hot-toast";
 import FarmingInitiativePopup from "./TelegramPopup";
 import ShareReferralModal from "@/components/webComponents/shareModal";
@@ -441,7 +442,7 @@ const Dashboard = () => {
                   onClick={async () => {
                     try {
                       await navigator.clipboard.writeText(
-                        `${window.location.origin}/signup?ref=${profile?.referral_code ?? ""}`,
+                        `${SITE_URL}/signup?ref=${profile?.referral_code ?? ""}`,
                       );
                       toast.success("Referral link copied");
                     } catch {

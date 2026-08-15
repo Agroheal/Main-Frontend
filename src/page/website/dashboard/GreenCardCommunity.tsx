@@ -15,6 +15,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { showToast } from "@/components/ui/ToastComponent";
 import { supabase } from "@/lib/supabaseClient";
+import { SITE_URL } from "@/config/Index";
 import GreenCardImage from "@/components/webComponents/GreenCardImage";
 
 const TIER_SIZE = 50;
@@ -137,7 +138,7 @@ const GreenCardCommunity = () => {
   }, [navigate]);
 
   const referralLink = referralCode
-    ? `${window.location.origin}/signup?ref=${referralCode}`
+    ? `${SITE_URL}/signup?ref=${referralCode}`
     : "";
 
   const generateCardBlob = async (): Promise<Blob | null> => {
