@@ -20,7 +20,7 @@ import ProtectedRoute from "./routes/ProtectedRoutes";
 import DashboardLayout from "./components/layout/DashboardLayout";
 import Checkout from "./page/website/Slots/Checkout";
 import DashboardError from "./page/error/DashboardError";
-import RequireSubscription from "./page/website/dashboard/RequireSubscription";
+import GreenCardPrompt from "./page/website/dashboard/GreenCardPrompt";
 import Subscribe from "./page/website/dashboard/Subscribe";
 import ForgotPasswordForm from "./page/ForgotPassword";
 import UpdatePasswordForm from "./page/UpdatePassword";
@@ -93,13 +93,14 @@ const route = createBrowserRouter([
       { path: "/subscribe", element: <Subscribe /> },
       { path: "/dashboard/green-card", element: <GreenCardCommunity /> },
 
-      // subscription protected area
+      // login-protected dashboard area — GreenCardPrompt no longer blocks
+      // access, it just nudges Green Card-less users with a dismissible popup
       {
         path: "/dashboard",
         element: (
-          <RequireSubscription>
+          <GreenCardPrompt>
             <Outlet />
-          </RequireSubscription>
+          </GreenCardPrompt>
         ),
         errorElement: <DashboardError />,
         children: [
