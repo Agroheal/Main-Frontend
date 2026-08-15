@@ -14,7 +14,7 @@ serve(async (req) => {
   }
 
   try {
-    const { reference, provider, userId, referralCode } = await req.json();
+    const { reference, provider, userId } = await req.json();
 
     if (!reference || !provider || !userId) {
       return new Response(
@@ -97,6 +97,17 @@ serve(async (req) => {
     const expires = new Date();
     expires.setFullYear(now.getFullYear() + 100);
 
+    // Checked before the upsert below so we can tell a brand new
+    // activation apart from a retry of an already-activated Green Card
+    // (this repo's Subscribe.tsx retries verify-payment on visibility
+    // change / manual retry, so this call is not guaranteed to be unique).
+    const { data: existingSub } = await supabase
+      .from("subscriptions")
+      .select("user_id")
+      .eq("user_id", userId)
+      .maybeSingle();
+    const isFirstActivation = !existingSub;
+
     const { error: subError } = await supabase.from("subscriptions").upsert(
       {
         user_id: userId,
@@ -146,37 +157,22 @@ serve(async (req) => {
       console.error("Member ID assignment failed:", memberIdError);
     }
 
-    // ── Apply referral ────────────────────────────────────
-    if (referralCode) {
+    // ── Credit referral earnings (first activation only) ──
+    // referred_by is now set at signup time (see the handle_new_user DB
+    // trigger), not here — this only credits the referrer's earnings,
+    // and only the first time this user's Green Card ever activates.
+    if (isFirstActivation) {
       const { data: profile } = await supabase
         .from("profiles")
-        .select("id, referred_by")
+        .select("referred_by")
         .eq("id", userId)
         .maybeSingle();
 
-      if (profile && !profile.referred_by) {
-        const { data: referrer } = await supabase
-          .from("profiles")
-          .select("id")
-          .eq("referral_code", referralCode)
-          .maybeSingle();
-
-        if (referrer) {
-          await supabase
-            .from("profiles")
-            .update({ referred_by: referrer.id })
-            .eq("id", userId);
-
-          await supabase.rpc("increment_referral_earnings", {
-            referrer_id: referrer.id,
-          });
-        }
+      if (profile?.referred_by) {
+        await supabase.rpc("increment_referral_earnings", {
+          referrer_id: profile.referred_by,
+        });
       }
-
-      // clear from user metadata
-      await supabase.auth.admin.updateUserById(userId, {
-        user_metadata: { referral_code: null },
-      });
     }
 
     // ── Log the payment ───────────────────────────────────
