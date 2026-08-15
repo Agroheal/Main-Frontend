@@ -2,6 +2,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { Copy, Check, X, Sprout, Sparkles } from "lucide-react";
 import { useState } from "react";
 import toast from "react-hot-toast";
+import { SITE_URL } from "@/config/Index";
 
 interface ShareReferralModalProps {
   isOpen: boolean;
@@ -16,27 +17,19 @@ const ShareReferralModal = ({
 }: ShareReferralModalProps) => {
   const [copied, setCopied] = useState(false);
 
-  const textCopy = `Click the link below to register for the Challenge:
+  const textCopy = `Join me on Agroheal and secure your Green Card:
 
-https://www.agroheal.solutions/signup?ref=${referralCode}
+${SITE_URL}/signup?ref=${referralCode}
 
-🌍 Grow Food, Build Impact!
+🌱 What's the Agroheal Green Card?
 
-The 100 Day Container Garden Challenge isn’t just about food—it’s about impact.
+For a one-time ₦1,000 fee, you get full access to the Agroheal platform — organic farming courses, farm slot opportunities, and the LEAP Community.
 
-Imagine thousands of families across Nigeria growing their own Ugu, Okra, Tomatoes, Pepper, Yam, Fish, etc around their homes.
+🫚 Free Ginger Seedlings
 
-That is why we cannot keep this to ourselves or look away; we must reach our family, friends, and neighbours to join the challenge. Together, we can build food sufficiency and resilience.
+Every Green Card Community that reaches 50 members unlocks free ginger seedlings for everyone in it — one for every member. The more of us who join together, the sooner we unlock it.
 
-Join Weekly Training Sessions on Sundays 8pm on Google Meet
-
-All trainings are uploaded to the Agroheal dashboard. Once you register you immediately gain access to your user dashboard for resources for the Challenge and 30+ prior learning resources on Organic food production.
-
-🎟️ Registration: ₦2,000 only.
-
-📍 Venue: Meeting links are shared to Telegram and Whatsapp groups, which participants join through their dashboard after signing up.
-
-🍄 Mushroom Village Slots: Join in Group farming at ₦5,000 per slot — own multiple slots for multiple return`;
+Sign up with my link above and let's grow this together.`;
 
   const handleCopy = async () => {
     try {
