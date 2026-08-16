@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: agroheal-frontend
+    runtime: static
+    buildCommand: yarn build
+    staticPublishPath: ./dist
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
