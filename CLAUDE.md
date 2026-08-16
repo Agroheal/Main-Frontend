@@ -101,4 +101,4 @@ Sentry (`@sentry/react`) is initialized in `src/main.tsx` with browser tracing +
 
 ### Deployment
 
-Vercel (`vercel.json`), static build with SPA rewrite fallback (`/(.*) → /index.html`) so all client routes resolve correctly on refresh/direct load.
+Production (`agroheal.solutions`) is actually served from **Render** (confirmed via the `rndr-id` response header), behind Cloudflare — not Vercel, despite the repo also containing a `vercel.json`. SPA fallback for Render is `public/_redirects` (`/* /index.html 200`), which Vite copies into `dist/` on build; Render's static-site hosting picks it up automatically. Without it, every client-side route 404s on a direct/external load (only in-app navigation worked) — this bit referral links specifically, since those are always opened fresh from outside the app. `vercel.json`'s `routes`-based SPA fallback is present but appears unused by the current deployment; treat it as stale unless you confirm otherwise.
