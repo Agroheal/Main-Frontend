@@ -36,8 +36,7 @@ export default function GreenCardPrompt({
         return;
       }
 
-      const hasActiveGreenCard =
-        !!sub && new Date(sub.expires_at) > new Date();
+      const hasActiveGreenCard = !!sub && new Date(sub.expires_at) > new Date();
       setOpen(!hasActiveGreenCard);
     };
 
@@ -69,8 +68,8 @@ export default function GreenCardPrompt({
               Get your Agroheal Green Card
             </Dialog.Title>
             <Dialog.Description className="mb-6 text-center text-sm text-gray-500">
-              Unlock your Green Card Community, referral rewards, and free
-              ginger seedling progress for just ₦1,000, one-time.
+              Unlock your Green Card Community and Free Ginger Seedlings
+              progress for just N1000, one-time.
             </Dialog.Description>
 
             <Button

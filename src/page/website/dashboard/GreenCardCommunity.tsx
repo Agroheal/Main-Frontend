@@ -16,10 +16,12 @@ import { Button } from "@/components/ui/button";
 import { showToast } from "@/components/ui/ToastComponent";
 import { supabase } from "@/lib/supabaseClient";
 import { SITE_URL } from "@/config/Index";
+import { LANDSCAPE_CARD_SIZE, PORTRAIT_CARD_SIZE } from "@/constant/greenCard";
 import GreenCardImage from "@/components/webComponents/GreenCardImage";
 
 const TIER_SIZE = 50;
 const CARD_FILENAME = "agroheal-green-card.png";
+const DESKTOP_QUERY = "(min-width: 640px)";
 
 const downloadBlob = (blob: Blob, filename: string) => {
   const url = URL.createObjectURL(blob);
@@ -30,14 +32,46 @@ const downloadBlob = (blob: Blob, filename: string) => {
   URL.revokeObjectURL(url);
 };
 
+// Scales a fixed-pixel-size preview down to fit its container's actual
+// width, so the card stays fully visible (no horizontal scrolling) at any
+// screen size while the exported PNG keeps rendering at native resolution.
+const useFitScale = (contentWidth: number) => {
+  const ref = useRef<HTMLDivElement>(null);
+  const [scale, setScale] = useState(1);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+
+    const updateScale = () => {
+      setScale(Math.min(1, el.offsetWidth / contentWidth));
+    };
+
+    updateScale();
+    const observer = new ResizeObserver(updateScale);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [contentWidth]);
+
+  return [ref, scale] as const;
+};
+
 const GreenCardCommunity = () => {
   const navigate = useNavigate();
   const cardRef = useRef<HTMLDivElement>(null);
+  const [isDesktop, setIsDesktop] = useState(
+    () => window.matchMedia(DESKTOP_QUERY).matches,
+  );
+  const [landscapePreviewRef, landscapePreviewScale] = useFitScale(
+    LANDSCAPE_CARD_SIZE.width,
+  );
+  const [portraitPreviewRef, portraitPreviewScale] = useFitScale(
+    PORTRAIT_CARD_SIZE.width,
+  );
   const [loading, setLoading] = useState(true);
   const [hasGreenCard, setHasGreenCard] = useState(false);
   const [generatingCard, setGeneratingCard] = useState(false);
   const [referralCode, setReferralCode] = useState<string | null>(null);
-  const [fullName, setFullName] = useState<string>("");
   const [memberId, setMemberId] = useState<string>("");
   const [memberSince, setMemberSince] = useState<string>("");
   const [communitySize, setCommunitySize] = useState<number>(1);
@@ -82,7 +116,7 @@ const GreenCardCommunity = () => {
         await Promise.all([
           supabase
             .from("profiles")
-            .select("referral_code, full_name, member_id")
+            .select("referral_code, member_id")
             .eq("id", user.id)
             .maybeSingle(),
           supabase.rpc("get_green_card_community_size", {
@@ -99,7 +133,6 @@ const GreenCardCommunity = () => {
         });
       }
 
-      setFullName(profile?.full_name ?? "Agroheal Member");
       setCommunitySize(typeof size === "number" ? size : 1);
 
       if (profile?.referral_code) {
@@ -136,6 +169,13 @@ const GreenCardCommunity = () => {
 
     load();
   }, [navigate]);
+
+  useEffect(() => {
+    const mql = window.matchMedia(DESKTOP_QUERY);
+    const handleChange = (e: MediaQueryListEvent) => setIsDesktop(e.matches);
+    mql.addEventListener("change", handleChange);
+    return () => mql.removeEventListener("change", handleChange);
+  }, []);
 
   const referralLink = referralCode
     ? `${SITE_URL}/signup?ref=${referralCode}`
@@ -282,16 +322,80 @@ const GreenCardCommunity = () => {
           </p>
         </div>
 
-        <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
-          <div className="overflow-x-auto pb-2">
+        <div className="rounded-2xl border border-gray-200 bg-white p-4 sm:p-6 shadow-sm">
+          {/* Visible preview — landscape on larger screens, portrait on mobile
+              for readability, both scaled to fit their container width. */}
+          {isDesktop ? (
+            <div
+              ref={landscapePreviewRef}
+              className="w-full overflow-hidden rounded-3xl"
+            >
+              <div
+                className="mx-auto overflow-hidden rounded-3xl"
+                style={{
+                  width: LANDSCAPE_CARD_SIZE.width * landscapePreviewScale,
+                  height: LANDSCAPE_CARD_SIZE.height * landscapePreviewScale,
+                }}
+              >
+                <div
+                  style={{
+                    width: LANDSCAPE_CARD_SIZE.width,
+                    height: LANDSCAPE_CARD_SIZE.height,
+                    transform: `scale(${landscapePreviewScale})`,
+                    transformOrigin: "top left",
+                  }}
+                >
+                  <GreenCardImage
+                    memberId={memberId || "AGC-PENDING"}
+                    memberSince={memberSince}
+                    referralLink={referralLink}
+                  />
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div
+              ref={portraitPreviewRef}
+              className="w-full overflow-hidden rounded-3xl"
+            >
+              <div
+                className="mx-auto overflow-hidden rounded-3xl"
+                style={{
+                  width: PORTRAIT_CARD_SIZE.width * portraitPreviewScale,
+                  height: PORTRAIT_CARD_SIZE.height * portraitPreviewScale,
+                }}
+              >
+                <div
+                  style={{
+                    width: PORTRAIT_CARD_SIZE.width,
+                    height: PORTRAIT_CARD_SIZE.height,
+                    transform: `scale(${portraitPreviewScale})`,
+                    transformOrigin: "top left",
+                  }}
+                >
+                  <GreenCardImage
+                    variant="portrait"
+                    memberId={memberId || "AGC-PENDING"}
+                    memberSince={memberSince}
+                    referralLink={referralLink}
+                  />
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Hidden, always full-resolution landscape copy — this is what gets
+              captured for download/share, so the exported card always keeps
+              the same shape regardless of which preview is currently shown. */}
+          <div className="pointer-events-none absolute -left-[9999px] top-0" aria-hidden="true">
             <GreenCardImage
               ref={cardRef}
-              fullName={fullName}
               memberId={memberId || "AGC-PENDING"}
               memberSince={memberSince}
               referralLink={referralLink}
             />
           </div>
+
           <div className="flex flex-col sm:flex-row gap-2 mt-4">
             <Button
               onClick={handleDownloadCard}
@@ -313,7 +417,7 @@ const GreenCardCommunity = () => {
           </div>
         </div>
 
-        <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
+        <div className="rounded-2xl border border-gray-200 bg-white p-4 sm:p-6 shadow-sm">
           <div className="flex items-center gap-2 mb-3">
             <Users className="w-4 h-4 text-green-700" />
             <p className="text-sm font-semibold text-gray-900">
@@ -338,7 +442,7 @@ const GreenCardCommunity = () => {
           </div>
         </div>
 
-        <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
+        <div className="rounded-2xl border border-gray-200 bg-white p-4 sm:p-6 shadow-sm">
           <div className="flex items-center justify-between mb-4">
             <p className="text-sm font-semibold text-gray-900">
               Community progress

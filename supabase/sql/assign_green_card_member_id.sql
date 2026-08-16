@@ -20,7 +20,7 @@ begin
   end if;
 
   seq_val := nextval('green_card_member_seq');
-  new_id := 'AGC-' || lpad(seq_val::text, 5, '0') || '-' || p_join_year::text;
+  new_id := 'AGC-' || lpad(seq_val::text, 6, '0') || '-' || p_join_year::text;
 
   update profiles set member_id = new_id where id = p_user_id;
 
