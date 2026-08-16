@@ -23,6 +23,13 @@ const TIER_SIZE = 50;
 const CARD_FILENAME = "agroheal-green-card.png";
 const DESKTOP_QUERY = "(min-width: 640px)";
 
+interface CommunityMember {
+  id: string;
+  full_name: string | null;
+  member_id: string | null;
+  joined_at: string;
+}
+
 const downloadBlob = (blob: Blob, filename: string) => {
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
@@ -75,6 +82,9 @@ const GreenCardCommunity = () => {
   const [memberId, setMemberId] = useState<string>("");
   const [memberSince, setMemberSince] = useState<string>("");
   const [communitySize, setCommunitySize] = useState<number>(1);
+  const [communityMembers, setCommunityMembers] = useState<CommunityMember[]>(
+    [],
+  );
 
   useEffect(() => {
     const load = async () => {
@@ -112,17 +122,23 @@ const GreenCardCommunity = () => {
         }),
       );
 
-      const [{ data: profile }, { data: size, error: sizeError }] =
-        await Promise.all([
-          supabase
-            .from("profiles")
-            .select("referral_code, member_id")
-            .eq("id", user.id)
-            .maybeSingle(),
-          supabase.rpc("get_green_card_community_size", {
-            leader_id: user.id,
-          }),
-        ]);
+      const [
+        { data: profile },
+        { data: size, error: sizeError },
+        { data: members, error: membersError },
+      ] = await Promise.all([
+        supabase
+          .from("profiles")
+          .select("referral_code, member_id")
+          .eq("id", user.id)
+          .maybeSingle(),
+        supabase.rpc("get_green_card_community_size", {
+          leader_id: user.id,
+        }),
+        supabase.rpc("get_green_card_community_members", {
+          leader_id: user.id,
+        }),
+      ]);
 
       if (sizeError) {
         console.error("get_green_card_community_size failed", sizeError);
@@ -133,7 +149,15 @@ const GreenCardCommunity = () => {
         });
       }
 
+      if (membersError) {
+        console.error(
+          "get_green_card_community_members failed",
+          membersError,
+        );
+      }
+
       setCommunitySize(typeof size === "number" ? size : 1);
+      setCommunityMembers(Array.isArray(members) ? members : []);
 
       if (profile?.referral_code) {
         setReferralCode(profile.referral_code);
@@ -463,6 +487,49 @@ const GreenCardCommunity = () => {
               ? `You've just hit a milestone of ${TIER_SIZE}!`
               : `${remainingToNextTier} more member${remainingToNextTier === 1 ? "" : "s"} to unlock the next round of free ginger seedlings.`}
           </p>
+
+          <div className="mb-6">
+            <p className="text-xs font-semibold text-gray-900 uppercase tracking-wider mb-3">
+              Your referrals ({communityMembers.length})
+            </p>
+            {communityMembers.length === 0 ? (
+              <p className="text-sm text-gray-500 rounded-xl bg-gray-50 border border-gray-100 p-4">
+                No referrals yet — share your affiliate link above to start
+                building your community.
+              </p>
+            ) : (
+              <ul className="space-y-2 max-h-64 overflow-y-auto pr-1">
+                {communityMembers.map((member) => (
+                  <li
+                    key={member.id}
+                    className="flex items-center justify-between gap-3 rounded-xl border border-gray-100 bg-gray-50 px-3 py-2.5"
+                  >
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <span className="w-8 h-8 rounded-full bg-green-100 flex items-center justify-center flex-shrink-0">
+                        <Users className="w-3.5 h-3.5 text-green-700" />
+                      </span>
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium text-gray-900 truncate">
+                          {member.full_name || "Green Card member"}
+                        </p>
+                        {member.member_id && (
+                          <p className="text-xs text-gray-500">
+                            {member.member_id}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                    <span className="text-xs text-gray-400 flex-shrink-0">
+                      {new Date(member.joined_at).toLocaleDateString("en-US", {
+                        month: "short",
+                        year: "numeric",
+                      })}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
 
           <div className="flex items-start gap-3 rounded-xl bg-green-50 p-4">
             <div className="w-9 h-9 rounded-xl bg-white border border-green-100 flex items-center justify-center flex-shrink-0">
