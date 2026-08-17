@@ -1,27 +1,15 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Toaster } from "react-hot-toast";
-import { toPng } from "html-to-image";
-import {
-  Sprout,
-  Users,
-  Copy,
-  PartyPopper,
-  IdCard,
-  Lock,
-  Download,
-  Share2,
-} from "lucide-react";
+import QRCode from "react-qr-code";
+import { Sprout, Users, Copy, PartyPopper, IdCard, Lock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { showToast } from "@/components/ui/ToastComponent";
 import { supabase } from "@/lib/supabaseClient";
 import { SITE_URL } from "@/config/Index";
-import { LANDSCAPE_CARD_SIZE, PORTRAIT_CARD_SIZE } from "@/constant/greenCard";
 import GreenCardImage from "@/components/webComponents/GreenCardImage";
 
 const TIER_SIZE = 50;
-const CARD_FILENAME = "agroheal-green-card.png";
-const DESKTOP_QUERY = "(min-width: 640px)";
 
 interface CommunityMember {
   id: string;
@@ -30,55 +18,12 @@ interface CommunityMember {
   joined_at: string;
 }
 
-const downloadBlob = (blob: Blob, filename: string) => {
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = filename;
-  link.click();
-  URL.revokeObjectURL(url);
-};
-
-// Scales a fixed-pixel-size preview down to fit its container's actual
-// width, so the card stays fully visible (no horizontal scrolling) at any
-// screen size while the exported PNG keeps rendering at native resolution.
-const useFitScale = (contentWidth: number) => {
-  const ref = useRef<HTMLDivElement>(null);
-  const [scale, setScale] = useState(1);
-
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-
-    const updateScale = () => {
-      setScale(Math.min(1, el.offsetWidth / contentWidth));
-    };
-
-    updateScale();
-    const observer = new ResizeObserver(updateScale);
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, [contentWidth]);
-
-  return [ref, scale] as const;
-};
-
 const GreenCardCommunity = () => {
   const navigate = useNavigate();
-  const cardRef = useRef<HTMLDivElement>(null);
-  const [isDesktop, setIsDesktop] = useState(
-    () => window.matchMedia(DESKTOP_QUERY).matches,
-  );
-  const [landscapePreviewRef, landscapePreviewScale] = useFitScale(
-    LANDSCAPE_CARD_SIZE.width,
-  );
-  const [portraitPreviewRef, portraitPreviewScale] = useFitScale(
-    PORTRAIT_CARD_SIZE.width,
-  );
   const [loading, setLoading] = useState(true);
   const [hasGreenCard, setHasGreenCard] = useState(false);
-  const [generatingCard, setGeneratingCard] = useState(false);
   const [referralCode, setReferralCode] = useState<string | null>(null);
+  const [fullName, setFullName] = useState<string>("");
   const [memberId, setMemberId] = useState<string>("");
   const [memberSince, setMemberSince] = useState<string>("");
   const [communitySize, setCommunitySize] = useState<number>(1);
@@ -129,7 +74,7 @@ const GreenCardCommunity = () => {
       ] = await Promise.all([
         supabase
           .from("profiles")
-          .select("referral_code, member_id")
+          .select("referral_code, member_id, full_name")
           .eq("id", user.id)
           .maybeSingle(),
         supabase.rpc("get_green_card_community_size", {
@@ -158,6 +103,7 @@ const GreenCardCommunity = () => {
 
       setCommunitySize(typeof size === "number" ? size : 1);
       setCommunityMembers(Array.isArray(members) ? members : []);
+      setFullName(profile?.full_name ?? "");
 
       if (profile?.referral_code) {
         setReferralCode(profile.referral_code);
@@ -194,77 +140,9 @@ const GreenCardCommunity = () => {
     load();
   }, [navigate]);
 
-  useEffect(() => {
-    const mql = window.matchMedia(DESKTOP_QUERY);
-    const handleChange = (e: MediaQueryListEvent) => setIsDesktop(e.matches);
-    mql.addEventListener("change", handleChange);
-    return () => mql.removeEventListener("change", handleChange);
-  }, []);
-
   const referralLink = referralCode
     ? `${SITE_URL}/signup?ref=${referralCode}`
     : "";
-
-  const generateCardBlob = async (): Promise<Blob | null> => {
-    if (!cardRef.current) return null;
-    const dataUrl = await toPng(cardRef.current, { pixelRatio: 2 });
-    const response = await fetch(dataUrl);
-    return response.blob();
-  };
-
-  const handleDownloadCard = async () => {
-    setGeneratingCard(true);
-    try {
-      const blob = await generateCardBlob();
-      if (!blob) return;
-      downloadBlob(blob, CARD_FILENAME);
-    } catch (error) {
-      console.error("Card download failed", error);
-      showToast({
-        variant: "error",
-        title: "Couldn't generate your card",
-        description: "Please try again.",
-      });
-    } finally {
-      setGeneratingCard(false);
-    }
-  };
-
-  const handleShareCard = async () => {
-    setGeneratingCard(true);
-    try {
-      const blob = await generateCardBlob();
-      if (!blob) return;
-      const file = new File([blob], CARD_FILENAME, { type: "image/png" });
-
-      if (navigator.canShare?.({ files: [file] })) {
-        await navigator.share({
-          files: [file],
-          title: "My Agroheal Green Card",
-          text: "Join my Agroheal Green Card Community!",
-        });
-      } else {
-        downloadBlob(blob, CARD_FILENAME);
-        showToast({
-          variant: "success",
-          title: "Card downloaded",
-          description:
-            "Sharing isn't supported on this browser — share the downloaded image from your files.",
-        });
-      }
-    } catch (error) {
-      if ((error as Error)?.name !== "AbortError") {
-        console.error("Card share failed", error);
-        showToast({
-          variant: "error",
-          title: "Couldn't share your card",
-          description: "Please try again.",
-        });
-      }
-    } finally {
-      setGeneratingCard(false);
-    }
-  };
 
   const tiersUnlocked = Math.floor(communitySize / TIER_SIZE);
   const progressInTier = communitySize % TIER_SIZE;
@@ -347,97 +225,25 @@ const GreenCardCommunity = () => {
         </div>
 
         <div className="rounded-2xl border border-gray-200 bg-white p-4 sm:p-6 shadow-sm">
-          {/* Visible preview — landscape on larger screens, portrait on mobile
-              for readability, both scaled to fit their container width. */}
-          {isDesktop ? (
-            <div
-              ref={landscapePreviewRef}
-              className="w-full overflow-hidden rounded-3xl"
-            >
-              <div
-                className="mx-auto overflow-hidden rounded-3xl"
-                style={{
-                  width: LANDSCAPE_CARD_SIZE.width * landscapePreviewScale,
-                  height: LANDSCAPE_CARD_SIZE.height * landscapePreviewScale,
-                }}
-              >
-                <div
-                  style={{
-                    width: LANDSCAPE_CARD_SIZE.width,
-                    height: LANDSCAPE_CARD_SIZE.height,
-                    transform: `scale(${landscapePreviewScale})`,
-                    transformOrigin: "top left",
-                  }}
-                >
-                  <GreenCardImage
-                    memberId={memberId || "AGC-PENDING"}
-                    memberSince={memberSince}
-                    referralLink={referralLink}
-                  />
-                </div>
-              </div>
-            </div>
-          ) : (
-            <div
-              ref={portraitPreviewRef}
-              className="w-full overflow-hidden rounded-3xl"
-            >
-              <div
-                className="mx-auto overflow-hidden rounded-3xl"
-                style={{
-                  width: PORTRAIT_CARD_SIZE.width * portraitPreviewScale,
-                  height: PORTRAIT_CARD_SIZE.height * portraitPreviewScale,
-                }}
-              >
-                <div
-                  style={{
-                    width: PORTRAIT_CARD_SIZE.width,
-                    height: PORTRAIT_CARD_SIZE.height,
-                    transform: `scale(${portraitPreviewScale})`,
-                    transformOrigin: "top left",
-                  }}
-                >
-                  <GreenCardImage
-                    variant="portrait"
-                    memberId={memberId || "AGC-PENDING"}
-                    memberSince={memberSince}
-                    referralLink={referralLink}
-                  />
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Hidden, always full-resolution landscape copy — this is what gets
-              captured for download/share, so the exported card always keeps
-              the same shape regardless of which preview is currently shown. */}
-          <div className="pointer-events-none absolute -left-[9999px] top-0" aria-hidden="true">
+          {/* GreenCardImage is a self-contained SVG card that scales fluidly
+              via its own viewBox (no manual resize handling needed here) and
+              owns its own "Download card" button internally. */}
+          <div className="max-w-2xl mx-auto">
             <GreenCardImage
-              ref={cardRef}
+              memberName={fullName || undefined}
               memberId={memberId || "AGC-PENDING"}
               memberSince={memberSince}
-              referralLink={referralLink}
+              qrValue={referralLink || memberId || undefined}
+              fileName={memberId || undefined}
+              qrRenderer={(value, size) => (
+                <QRCode
+                  value={value}
+                  size={size}
+                  bgColor="#ffffff"
+                  fgColor="#111111"
+                />
+              )}
             />
-          </div>
-
-          <div className="flex flex-col sm:flex-row gap-2 mt-4">
-            <Button
-              onClick={handleDownloadCard}
-              disabled={generatingCard}
-              className="flex-1 h-11 bg-green-800 text-white hover:bg-green-700 rounded-xl"
-            >
-              <Download className="w-4 h-4 mr-2" />
-              Download
-            </Button>
-            <Button
-              onClick={handleShareCard}
-              disabled={generatingCard}
-              variant="outline"
-              className="flex-1 h-11 rounded-xl"
-            >
-              <Share2 className="w-4 h-4 mr-2" />
-              Share
-            </Button>
           </div>
         </div>
 
