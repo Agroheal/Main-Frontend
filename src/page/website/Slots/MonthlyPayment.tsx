@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
@@ -611,6 +611,9 @@ const MonthlyPayment = () => {
   const [loading, setLoading] = useState(true);
   const [selectedSlotId, setSelectedSlotId] = useState<string | null>(null);
   const [selectedCategory, setSelectedCategory] = useState(DEFAULT_CATEGORY);
+  // Only auto-pick a category once, on the first load — later refetches
+  // (e.g. after a renewal payment) shouldn't override a manual selection.
+  const hasAutoSelectedCategory = useRef(false);
 
   const filteredSubscriptions = subscriptions.filter(s => (s.project_category || "Gingertown") === selectedCategory);
   const filteredOtherPayments = otherPayments.filter(p => (p.project_category || "Gingertown") === selectedCategory);
@@ -652,6 +655,18 @@ const MonthlyPayment = () => {
     // Use most recent active slot, fallback to most recent — same as original
     const active = all.find((s) => s.status === "active") || all[0] || null;
     setActiveSubscription(active);
+
+    // Default the category tab to wherever the user actually has records,
+    // instead of always defaulting to "Gingertown" — otherwise anyone whose
+    // only subscription is in another category (e.g. Mushroom Village) sees
+    // an empty list on load with no indication they need to switch tabs.
+    if (!hasAutoSelectedCategory.current) {
+      hasAutoSelectedCategory.current = true;
+      if (active?.project_category) {
+        setSelectedCategory(active.project_category);
+      }
+    }
+
     setLoading(false);
   };
 
