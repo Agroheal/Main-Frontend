@@ -248,6 +248,39 @@ serve(async (req) => {
       );
     }
 
+    // ── ACTION: update_member ───────────────────────────────────────────────────
+    if (action === "update_member") {
+      const { user_id, full_name, phone, member_id, referral_code, role } = payload;
+      if (!user_id) {
+        return new Response(
+          JSON.stringify({ success: false, message: "User ID is required" }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      const updatePayload: Record<string, any> = {};
+      if (full_name !== undefined) updatePayload.full_name = full_name.trim();
+      if (phone !== undefined) updatePayload.phone = phone.trim();
+      if (member_id !== undefined) updatePayload.member_id = member_id.trim();
+      if (referral_code !== undefined) updatePayload.referral_code = referral_code.trim().toUpperCase();
+      if (role !== undefined) updatePayload.role = role;
+
+      const { error: updateErr } = await adminClient
+        .from("profiles")
+        .update(updatePayload)
+        .eq("id", user_id);
+
+      if (updateErr) throw updateErr;
+
+      return new Response(
+        JSON.stringify({
+          success: true,
+          message: "Member profile updated successfully."
+        }),
+        { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
     // ── ACTION: update_config ───────────────────────────────────────────────────
     if (action === "update_config") {
       const { key, value } = payload;

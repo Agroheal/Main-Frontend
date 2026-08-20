@@ -20,7 +20,11 @@ import {
   FileText,
   Send,
   Phone,
-  X
+  X,
+  Edit3,
+  UserCog,
+  Save,
+  KeyRound
 } from 'lucide-react';
 
 interface Member {
@@ -31,6 +35,7 @@ interface Member {
   member_id: string;
   referral_code: string;
   referred_by: string;
+  role?: string;
   created_at: string;
 }
 
@@ -75,6 +80,15 @@ export default function App() {
   const [creditCategory, setCreditCategory] = useState('Mushroom Village');
   const [creditSlots, setCreditSlots] = useState(1);
   const [creditLoading, setCreditLoading] = useState(false);
+
+  // Edit Member Profile Modal State
+  const [editingMember, setEditingMember] = useState<Member | null>(null);
+  const [editFullName, setEditFullName] = useState('');
+  const [editPhone, setEditPhone] = useState('');
+  const [editMemberId, setEditMemberId] = useState('');
+  const [editReferralCode, setEditReferralCode] = useState('');
+  const [editRole, setEditRole] = useState('user');
+  const [editSaving, setEditSaving] = useState(false);
 
   // Password recovery assistant state
   const [recoveryLoading, setRecoveryLoading] = useState(false);
@@ -174,6 +188,7 @@ export default function App() {
         member_id: p.member_id || 'No ID Assigned',
         referral_code: p.referral_code || '',
         referred_by: p.referred_by || '',
+        role: p.role || 'user',
         created_at: p.created_at ? new Date(p.created_at).toLocaleDateString() : 'N/A'
       }));
 
@@ -256,6 +271,76 @@ export default function App() {
       }
     } catch {
       // Ignored if table not created yet
+    }
+  };
+
+  // ── Open Edit Member Modal ────────────────────────────────────────────────
+  const startEditingMember = (member: Member) => {
+    setEditingMember(member);
+    setEditFullName(member.full_name || '');
+    setEditPhone(member.phone || '');
+    setEditMemberId(member.member_id === 'No ID Assigned' ? '' : member.member_id);
+    setEditReferralCode(member.referral_code || '');
+    setEditRole(member.role || 'user');
+    setErrorMessage('');
+  };
+
+  // ── Save Edited Member Profile ────────────────────────────────────────────
+  const handleSaveMemberProfile = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingMember) return;
+    if (!editFullName.trim()) {
+      setErrorMessage('Full Name cannot be empty.');
+      return;
+    }
+
+    setEditSaving(true);
+    setErrorMessage('');
+
+    try {
+      // Try Edge Function
+      const { data: edgeRes, error: edgeErr } = await supabase.functions.invoke('admin-actions', {
+        body: {
+          action: 'update_member',
+          user_id: editingMember.id,
+          full_name: editFullName.trim(),
+          phone: editPhone.trim(),
+          member_id: editMemberId.trim() || undefined,
+          referral_code: editReferralCode.trim() || undefined,
+          role: editRole
+        }
+      });
+
+      if (!edgeErr && edgeRes?.success) {
+        setSuccessMessage(`Profile updated successfully for ${editFullName}!`);
+        setEditingMember(null);
+        fetchData();
+        return;
+      }
+
+      // Fallback: Direct database update
+      const { error: dbErr } = await supabase
+        .from('profiles')
+        .update({
+          full_name: editFullName.trim(),
+          phone: editPhone.trim(),
+          member_id: editMemberId.trim() || null,
+          referral_code: editReferralCode.trim().toUpperCase() || null,
+          role: editRole
+        })
+        .eq('id', editingMember.id);
+
+      if (dbErr) throw dbErr;
+
+      setSuccessMessage(`Profile updated successfully for ${editFullName}!`);
+      setEditingMember(null);
+      fetchData();
+
+    } catch (err: any) {
+      console.error(err);
+      setErrorMessage(err.message || 'Failed to update member profile.');
+    } finally {
+      setEditSaving(false);
     }
   };
 
@@ -1015,6 +1100,7 @@ export default function App() {
                       <tr>
                         <th>Member Details</th>
                         <th>Member ID</th>
+                        <th>Role</th>
                         <th>Joined Date</th>
                         <th>Referral Code</th>
                         <th>Referred By</th>
@@ -1034,24 +1120,40 @@ export default function App() {
                             )}
                           </td>
                           <td style={{ fontFamily: 'var(--mono)', fontSize: 13 }}>{m.member_id}</td>
+                          <td>
+                            <span className={`status-badge ${m.role === 'admin' ? 'status-active' : 'status-pending'}`} style={{ fontSize: 11, padding: '2px 8px' }}>
+                              {m.role || 'user'}
+                            </span>
+                          </td>
                           <td>{m.created_at}</td>
                           <td style={{ fontFamily: 'var(--mono)' }}>{m.referral_code || 'N/A'}</td>
                           <td style={{ fontSize: 12 }}>{m.referred_by || 'Direct'}</td>
                           <td style={{ textAlign: 'right' }}>
-                            <button 
-                              onClick={() => handlePasswordReset(m)} 
-                              disabled={recoveryLoading}
-                              className="button button-secondary"
-                              style={{ padding: '6px 12px', fontSize: 12 }}
-                            >
-                              Reset Password
-                            </button>
+                            <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+                              <button 
+                                onClick={() => startEditingMember(m)}
+                                className="button button-secondary"
+                                style={{ padding: '6px 10px', fontSize: 12, gap: 4 }}
+                                title="Edit Profile Details"
+                              >
+                                <Edit3 size={13} /> Edit
+                              </button>
+                              <button 
+                                onClick={() => handlePasswordReset(m)} 
+                                disabled={recoveryLoading}
+                                className="button button-secondary"
+                                style={{ padding: '6px 10px', fontSize: 12, gap: 4 }}
+                                title="Reset Password"
+                              >
+                                <KeyRound size={13} /> Reset
+                              </button>
+                            </div>
                           </td>
                         </tr>
                       ))}
                       {filteredMembers.length === 0 && (
                         <tr>
-                          <td colSpan={6} style={{ textAlign: 'center', padding: '32px', color: 'var(--text-muted)' }}>
+                          <td colSpan={7} style={{ textAlign: 'center', padding: '32px', color: 'var(--text-muted)' }}>
                             No members found matching "{searchQuery}".
                           </td>
                         </tr>
@@ -1216,6 +1318,161 @@ export default function App() {
           )}
         </div>
       </main>
+
+      {/* ── Edit Member Modal ────────────────────────────────────────────── */}
+      {editingMember && (
+        <div className="modal-overlay" onClick={() => setEditingMember(null)}>
+          <div className="modal-card" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <span className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <UserCog size={20} color="#10b981" /> Edit Member Profile
+              </span>
+              <button 
+                onClick={() => setEditingMember(null)}
+                style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveMemberProfile}>
+              <div className="modal-body">
+                <div>
+                  <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 6 }}>
+                    Full Name
+                  </label>
+                  <input 
+                    type="text"
+                    value={editFullName}
+                    onChange={(e) => setEditFullName(e.target.value)}
+                    style={{
+                      width: '100%',
+                      backgroundColor: 'var(--bg-primary)',
+                      border: '1px solid var(--border-color)',
+                      borderRadius: '8px',
+                      padding: '10px 12px',
+                      color: 'var(--text-primary)',
+                      fontSize: '14px',
+                      outline: 'none'
+                    }}
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 6 }}>
+                    Phone Number
+                  </label>
+                  <input 
+                    type="text"
+                    value={editPhone}
+                    onChange={(e) => setEditPhone(e.target.value)}
+                    placeholder="08012345678"
+                    style={{
+                      width: '100%',
+                      backgroundColor: 'var(--bg-primary)',
+                      border: '1px solid var(--border-color)',
+                      borderRadius: '8px',
+                      padding: '10px 12px',
+                      color: 'var(--text-primary)',
+                      fontSize: '14px',
+                      outline: 'none'
+                    }}
+                  />
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                  <div>
+                    <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 6 }}>
+                      Member ID
+                    </label>
+                    <input 
+                      type="text"
+                      value={editMemberId}
+                      onChange={(e) => setEditMemberId(e.target.value)}
+                      placeholder="AGC-000123-2026"
+                      style={{
+                        width: '100%',
+                        backgroundColor: 'var(--bg-primary)',
+                        border: '1px solid var(--border-color)',
+                        borderRadius: '8px',
+                        padding: '10px 12px',
+                        color: 'var(--text-primary)',
+                        fontSize: '14px',
+                        fontFamily: 'var(--mono)',
+                        outline: 'none'
+                      }}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 6 }}>
+                      Referral Code
+                    </label>
+                    <input 
+                      type="text"
+                      value={editReferralCode}
+                      onChange={(e) => setEditReferralCode(e.target.value)}
+                      placeholder="REF123"
+                      style={{
+                        width: '100%',
+                        backgroundColor: 'var(--bg-primary)',
+                        border: '1px solid var(--border-color)',
+                        borderRadius: '8px',
+                        padding: '10px 12px',
+                        color: 'var(--text-primary)',
+                        fontSize: '14px',
+                        fontFamily: 'var(--mono)',
+                        outline: 'none'
+                      }}
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 6 }}>
+                    User Access Role
+                  </label>
+                  <select
+                    value={editRole}
+                    onChange={(e) => setEditRole(e.target.value)}
+                    style={{
+                      width: '100%',
+                      backgroundColor: 'var(--bg-primary)',
+                      border: '1px solid var(--border-color)',
+                      borderRadius: '8px',
+                      padding: '10px 12px',
+                      color: 'var(--text-primary)',
+                      fontSize: '14px',
+                      outline: 'none'
+                    }}
+                  >
+                    <option value="user">Standard User</option>
+                    <option value="admin">Administrator</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="modal-footer">
+                <button 
+                  type="button" 
+                  onClick={() => setEditingMember(null)}
+                  className="button button-secondary"
+                >
+                  Cancel
+                </button>
+                <button 
+                  type="submit" 
+                  disabled={editSaving}
+                  className="button"
+                >
+                  <Save size={14} /> {editSaving ? 'Saving Changes...' : 'Save Profile Changes'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
