@@ -24,8 +24,15 @@ import {
   Edit3,
   UserCog,
   Save,
-  KeyRound
+  KeyRound,
+  Filter
 } from 'lucide-react';
+
+interface MemberSlotSummary {
+  category: string;
+  slots: number;
+  status: string;
+}
 
 interface Member {
   id: string;
@@ -37,6 +44,8 @@ interface Member {
   referred_by: string;
   role?: string;
   created_at: string;
+  total_slots: number;
+  slots_by_program: MemberSlotSummary[];
 }
 
 interface PaymentLog {
@@ -59,6 +68,7 @@ export default function App() {
   // Tab & Data State
   const [activeTab, setActiveTab] = useState<'dashboard' | 'members' | 'payments' | 'settings'>('dashboard');
   const [searchQuery, setSearchQuery] = useState('');
+  const [programFilter, setProgramFilter] = useState('all');
   const [members, setMembers] = useState<Member[]>([]);
   const [paymentLogs, setPaymentLogs] = useState<PaymentLog[]>([]);
   const [loading, setLoading] = useState(false);
@@ -97,6 +107,23 @@ export default function App() {
   // Dynamic Document / Terms Updater state
   const [legalAgreementText, setLegalAgreementText] = useState('');
   const [policySaving, setPolicySaving] = useState(false);
+
+  // ── Helper: Program Pill Styling & Icons ──────────────────────────────────
+  const getProgramPillClass = (category: string) => {
+    const cat = category.toLowerCase();
+    if (cat.includes('mushroom')) return 'program-pill-mushroom';
+    if (cat.includes('potato')) return 'program-pill-potato';
+    if (cat.includes('ginger')) return 'program-pill-ginger';
+    return 'program-pill-general';
+  };
+
+  const getProgramEmoji = (category: string) => {
+    const cat = category.toLowerCase();
+    if (cat.includes('mushroom')) return '🍄';
+    if (cat.includes('potato')) return '🍠';
+    if (cat.includes('ginger')) return '🌿';
+    return '🌱';
+  };
 
   // ── Auth Check on Mount ───────────────────────────────────────────────────
   useEffect(() => {
@@ -172,47 +199,60 @@ export default function App() {
   const fetchData = async () => {
     setLoading(true);
     try {
-      // 1. Fetch profiles
-      const { data: profiles, error: profileErr } = await supabase
-        .from('profiles')
-        .select('*')
-        .order('created_at', { ascending: false });
+      // 1. Fetch profiles, slots, and other payments concurrently
+      const [profilesRes, slotsRes, otherPayRes] = await Promise.all([
+        supabase.from('profiles').select('*').order('created_at', { ascending: false }),
+        supabase.from('slot_subscriptions').select('*').order('last_payment_date', { ascending: false }),
+        supabase.from('other_payments').select('*').order('created_at', { ascending: false })
+      ]);
 
-      if (profileErr) throw profileErr;
+      if (profilesRes.error) throw profilesRes.error;
+      if (slotsRes.error) throw slotsRes.error;
+      if (otherPayRes.error) throw otherPayRes.error;
 
-      const mappedMembers = (profiles || []).map((p: any) => ({
-        id: p.id,
-        full_name: p.full_name || 'Unnamed Member',
-        email: p.email || `${p.referral_code?.toLowerCase() || p.id.slice(0, 5)}@agroheal.com`,
-        phone: p.phone || p.phone_number || '',
-        member_id: p.member_id || 'No ID Assigned',
-        referral_code: p.referral_code || '',
-        referred_by: p.referred_by || '',
-        role: p.role || 'user',
-        created_at: p.created_at ? new Date(p.created_at).toLocaleDateString() : 'N/A'
-      }));
+      const profiles = profilesRes.data || [];
+      const slots = slotsRes.data || [];
+      const otherPayments = otherPayRes.data || [];
+
+      // 2. Map members with calculated slot holdings per program
+      const mappedMembers: Member[] = profiles.map((p: any) => {
+        const userSlots = slots.filter((s: any) => s.user_id === p.id && s.status === 'active');
+        
+        const programMap: Record<string, { category: string; slots: number; status: string }> = {};
+        let totalSlots = 0;
+
+        userSlots.forEach((s: any) => {
+          const category = s.project_category || 'Mushroom Village';
+          const slotCount = Number(s.slots) || 0;
+          totalSlots += slotCount;
+
+          if (!programMap[category]) {
+            programMap[category] = { category, slots: 0, status: s.status || 'active' };
+          }
+          programMap[category].slots += slotCount;
+        });
+
+        return {
+          id: p.id,
+          full_name: p.full_name || 'Unnamed Member',
+          email: p.email || `${p.referral_code?.toLowerCase() || p.id.slice(0, 5)}@agroheal.com`,
+          phone: p.phone || p.phone_number || '',
+          member_id: p.member_id || 'No ID Assigned',
+          referral_code: p.referral_code || '',
+          referred_by: p.referred_by || '',
+          role: p.role || 'user',
+          created_at: p.created_at ? new Date(p.created_at).toLocaleDateString() : 'N/A',
+          total_slots: totalSlots,
+          slots_by_program: Object.values(programMap)
+        };
+      });
 
       setMembers(mappedMembers);
 
-      // 2. Fetch slot subscriptions
-      const { data: slots, error: slotErr } = await supabase
-        .from('slot_subscriptions')
-        .select('*')
-        .order('last_payment_date', { ascending: false });
-
-      if (slotErr) throw slotErr;
-
-      // 3. Fetch other payments
-      const { data: otherPayments, error: paymentErr } = await supabase
-        .from('other_payments')
-        .select('*')
-        .order('created_at', { ascending: false });
-
-      if (paymentErr) throw paymentErr;
-
+      // 3. Build Payment Logs
       const combinedLogs: PaymentLog[] = [];
       
-      (slots || []).forEach((s: any) => {
+      slots.forEach((s: any) => {
         const member = mappedMembers.find(m => m.id === s.user_id);
         combinedLogs.push({
           id: s.id || `SLOT-${Math.random().toString(36).slice(2, 6)}`,
@@ -226,7 +266,7 @@ export default function App() {
         });
       });
 
-      (otherPayments || []).forEach((p: any) => {
+      otherPayments.forEach((p: any) => {
         const member = mappedMembers.find(m => m.id === p.user_id);
         combinedLogs.push({
           id: p.id || `PAY-${Math.random().toString(36).slice(2, 6)}`,
@@ -609,14 +649,13 @@ export default function App() {
     window.open(`https://wa.me/?text=${encoded}`, '_blank');
   };
 
-  // ── Search Filters (Name, Email, Phone, Member ID) ────────────────────────
+  // ── Search & Program Filters ──────────────────────────────────────────────
   const filterMemberPredicate = (m: Member, queryStr: string) => {
     const query = queryStr.toLowerCase().trim();
-    if (!query) return true;
     const cleanPhone = m.phone.replace(/[^0-9]/g, '');
     const cleanQuery = query.replace(/[^0-9]/g, '');
 
-    return (
+    const textMatch = !query || (
       m.full_name.toLowerCase().includes(query) ||
       m.email.toLowerCase().includes(query) ||
       (cleanQuery.length >= 3 && cleanPhone.includes(cleanQuery)) ||
@@ -624,10 +663,36 @@ export default function App() {
       m.member_id.toLowerCase().includes(query) ||
       m.referral_code.toLowerCase().includes(query)
     );
+
+    if (!textMatch) return false;
+
+    if (programFilter === 'has_slots') {
+      return m.total_slots > 0;
+    }
+    if (programFilter === 'no_slots') {
+      return m.total_slots === 0;
+    }
+    if (programFilter !== 'all') {
+      return m.slots_by_program.some(prog => prog.category.toLowerCase().includes(programFilter.toLowerCase()));
+    }
+
+    return true;
   };
 
   const filteredMembers = members.filter(m => filterMemberPredicate(m, searchQuery));
-  const searchableSlotMembers = members.filter(m => filterMemberPredicate(m, memberPickerSearch));
+  const searchableSlotMembers = members.filter(m => {
+    const q = memberPickerSearch.toLowerCase().trim();
+    if (!q) return true;
+    const cleanPhone = m.phone.replace(/[^0-9]/g, '');
+    const cleanQuery = q.replace(/[^0-9]/g, '');
+    return (
+      m.full_name.toLowerCase().includes(q) ||
+      m.email.toLowerCase().includes(q) ||
+      (cleanQuery.length >= 3 && cleanPhone.includes(cleanQuery)) ||
+      m.phone.toLowerCase().includes(q) ||
+      m.member_id.toLowerCase().includes(q)
+    );
+  });
   const selectedMember = members.find(m => m.id === selectedMemberId);
 
   // ── Gating: If not logged in, show Login Screen ────────────────────────────
@@ -713,7 +778,7 @@ export default function App() {
           <div className="header-title">
             <h2>
               {activeTab === 'dashboard' && 'Dashboard Overview'}
-              {activeTab === 'members' && 'Member Directory'}
+              {activeTab === 'members' && 'Member Directory & Slot Holdings'}
               {activeTab === 'payments' && 'Operations & Payment Logs'}
               {activeTab === 'settings' && 'System Documents & Terms'}
             </h2>
@@ -794,18 +859,29 @@ export default function App() {
                       
                       {selectedMember ? (
                         <div className="selected-member-card">
-                          <div className="selected-member-info">
+                          <div className="selected-member-info" style={{ flexGrow: 1 }}>
                             <div className="selected-member-avatar">
                               {selectedMember.full_name.charAt(0).toUpperCase()}
                             </div>
-                            <div>
+                            <div style={{ flexGrow: 1 }}>
                               <div style={{ fontWeight: 700, fontSize: 14 }}>{selectedMember.full_name}</div>
                               <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
                                 {selectedMember.email} {selectedMember.phone ? `• 📞 ${selectedMember.phone}` : ''}
                               </div>
-                              <span className="member-picker-badge" style={{ marginTop: 4, display: 'inline-block' }}>
-                                {selectedMember.member_id}
-                              </span>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4, flexWrap: 'wrap' }}>
+                                <span className="member-picker-badge">
+                                  {selectedMember.member_id}
+                                </span>
+                                {selectedMember.total_slots > 0 ? (
+                                  selectedMember.slots_by_program.map((prog, idx) => (
+                                    <span key={idx} className={`program-pill ${getProgramPillClass(prog.category)}`} style={{ fontSize: 10, padding: '1px 5px' }}>
+                                      {getProgramEmoji(prog.category)} {prog.category.replace(' Village', '')}: {prog.slots}
+                                    </span>
+                                  ))
+                                ) : (
+                                  <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>0 current slots</span>
+                                )}
+                              </div>
                             </div>
                           </div>
                           <button 
@@ -816,7 +892,7 @@ export default function App() {
                               setIsPickerOpen(true);
                             }}
                             className="button button-secondary"
-                            style={{ padding: '6px 10px', fontSize: 12, gap: 4 }}
+                            style={{ padding: '6px 10px', fontSize: 12, gap: 4, marginLeft: 8 }}
                           >
                             <X size={13} /> Change
                           </button>
@@ -858,9 +934,16 @@ export default function App() {
                                       {m.email} {m.phone ? `• 📞 ${m.phone}` : ''}
                                     </div>
                                   </div>
-                                  <span className="member-picker-badge">
-                                    {m.member_id}
-                                  </span>
+                                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}>
+                                    <span className="member-picker-badge">
+                                      {m.member_id}
+                                    </span>
+                                    {m.total_slots > 0 ? (
+                                      <span style={{ fontSize: 10, color: '#34d399', fontWeight: 600 }}>
+                                        🌱 {m.total_slots} {m.total_slots === 1 ? 'Slot' : 'Slots'}
+                                      </span>
+                                    ) : null}
+                                  </div>
                                 </div>
                               ))}
                               {searchableSlotMembers.length === 0 && (
@@ -1071,13 +1154,45 @@ export default function App() {
             <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
               <div className="table-card">
                 <div className="card-header" style={{ flexDirection: 'row', gap: '16px', flexWrap: 'wrap' }}>
-                  <span className="card-title">All Members ({filteredMembers.length})</span>
-                  <div style={{ display: 'flex', gap: '12px', flexGrow: 1, justifyContent: 'flex-end', maxWidth: '440px' }}>
-                    <div style={{ position: 'relative', width: '100%' }}>
+                  <div>
+                    <span className="card-title">All Members ({filteredMembers.length})</span>
+                    <span style={{ fontSize: 12, color: 'var(--text-secondary)', marginLeft: 8 }}>
+                      Total Platform Leased Slots: <strong>{members.reduce((sum, m) => sum + m.total_slots, 0)}</strong>
+                    </span>
+                  </div>
+
+                  <div style={{ display: 'flex', gap: '12px', flexGrow: 1, justifyContent: 'flex-end', maxWidth: '640px', flexWrap: 'wrap' }}>
+                    {/* Program Filter */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <Filter size={14} style={{ color: 'var(--text-muted)' }} />
+                      <select
+                        value={programFilter}
+                        onChange={(e) => setProgramFilter(e.target.value)}
+                        style={{
+                          backgroundColor: 'var(--bg-primary)',
+                          border: '1px solid var(--border-color)',
+                          borderRadius: '8px',
+                          padding: '8px 12px',
+                          color: 'var(--text-primary)',
+                          fontSize: '13px',
+                          outline: 'none'
+                        }}
+                      >
+                        <option value="all">All Programs</option>
+                        <option value="has_slots">🌱 Has Active Slots ({members.filter(m => m.total_slots > 0).length})</option>
+                        <option value="no_slots">0 Slots ({members.filter(m => m.total_slots === 0).length})</option>
+                        <option value="Mushroom">🍄 Mushroom Village</option>
+                        <option value="Sweet Potato">🍠 Sweet Potato Village</option>
+                        <option value="Ginger">🌿 Ginger Village</option>
+                      </select>
+                    </div>
+
+                    {/* Search Input */}
+                    <div style={{ position: 'relative', minWidth: '260px', flexGrow: 1 }}>
                       <Search size={16} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
                       <input 
                         type="text" 
-                        placeholder="Search by Name, Email, Phone (080...), or ID..."
+                        placeholder="Search by Name, Email, Phone, ID..."
                         value={searchQuery}
                         onChange={(e) => setSearchQuery(e.target.value)}
                         style={{
@@ -1085,15 +1200,16 @@ export default function App() {
                           backgroundColor: 'var(--bg-primary)',
                           border: '1px solid var(--border-color)',
                           borderRadius: '8px',
-                          padding: '10px 12px 10px 36px',
+                          padding: '9px 12px 9px 36px',
                           color: 'var(--text-primary)',
-                          fontSize: '14px',
+                          fontSize: '13px',
                           outline: 'none'
                         }}
                       />
                     </div>
                   </div>
                 </div>
+
                 <div className="data-table-wrapper">
                   <table className="data-table">
                     <thead>
@@ -1101,9 +1217,10 @@ export default function App() {
                         <th>Member Details</th>
                         <th>Member ID</th>
                         <th>Role</th>
-                        <th>Joined Date</th>
+                        <th>Subscribed Programs & Slots</th>
                         <th>Referral Code</th>
                         <th>Referred By</th>
+                        <th>Joined</th>
                         <th style={{ textAlign: 'right' }}>Actions</th>
                       </tr>
                     </thead>
@@ -1125,9 +1242,27 @@ export default function App() {
                               {m.role || 'user'}
                             </span>
                           </td>
-                          <td>{m.created_at}</td>
+                          <td>
+                            {m.total_slots > 0 ? (
+                              <div>
+                                <span className="slot-badge-total">
+                                  <Sprout size={12} /> {m.total_slots} {m.total_slots === 1 ? 'Slot' : 'Slots'}
+                                </span>
+                                <div className="program-pills-container">
+                                  {m.slots_by_program.map((prog, idx) => (
+                                    <span key={idx} className={`program-pill ${getProgramPillClass(prog.category)}`}>
+                                      {getProgramEmoji(prog.category)} {prog.category.replace(' Village', '')}: <strong>{prog.slots}</strong>
+                                    </span>
+                                  ))}
+                                </div>
+                              </div>
+                            ) : (
+                              <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>0 Slots</span>
+                            )}
+                          </td>
                           <td style={{ fontFamily: 'var(--mono)' }}>{m.referral_code || 'N/A'}</td>
                           <td style={{ fontSize: 12 }}>{m.referred_by || 'Direct'}</td>
+                          <td style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{m.created_at}</td>
                           <td style={{ textAlign: 'right' }}>
                             <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
                               <button 
@@ -1153,8 +1288,8 @@ export default function App() {
                       ))}
                       {filteredMembers.length === 0 && (
                         <tr>
-                          <td colSpan={7} style={{ textAlign: 'center', padding: '32px', color: 'var(--text-muted)' }}>
-                            No members found matching "{searchQuery}".
+                          <td colSpan={8} style={{ textAlign: 'center', padding: '32px', color: 'var(--text-muted)' }}>
+                            No members found matching the current search / filter criteria.
                           </td>
                         </tr>
                       )}
@@ -1337,6 +1472,24 @@ export default function App() {
 
             <form onSubmit={handleSaveMemberProfile}>
               <div className="modal-body">
+                {/* Active Program Holdings in Modal */}
+                <div style={{ padding: 12, backgroundColor: 'rgba(255, 255, 255, 0.02)', borderRadius: 8, border: '1px solid var(--border-color)' }}>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-secondary)', display: 'block', marginBottom: 6 }}>
+                    Current Program Enrollments & Slots:
+                  </span>
+                  {editingMember.total_slots > 0 ? (
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                      {editingMember.slots_by_program.map((prog, idx) => (
+                        <span key={idx} className={`program-pill ${getProgramPillClass(prog.category)}`}>
+                          {getProgramEmoji(prog.category)} {prog.category}: <strong>{prog.slots} slots</strong>
+                        </span>
+                      ))}
+                    </div>
+                  ) : (
+                    <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>No active farm slots on record.</span>
+                  )}
+                </div>
+
                 <div>
                   <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 6 }}>
                     Full Name
