@@ -11,6 +11,8 @@
     "apps/*"
   ],
   "scripts": {
+    "dev": "concurrently -n \"web,admin\" -c \"cyan,magenta\" \"yarn web:dev\" \"yarn admin:dev\"",
+    "build": "yarn web:build && yarn admin:build",
     "web:dev": "yarn workspace web dev",
     "web:build": "yarn workspace web build",
     "web:typecheck": "yarn workspace web typecheck",
@@ -19,5 +21,8 @@
     "admin:build": "yarn workspace admin build",
     "admin:typecheck": "yarn workspace admin typecheck",
     "admin:lint": "yarn workspace admin lint"
+  },
+  "devDependencies": {
+    "concurrently": "^10.0.5"
   }
 }
