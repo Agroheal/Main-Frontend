@@ -18,13 +18,16 @@ import {
   LogOut,
   MessageCircle,
   FileText,
-  Send
+  Send,
+  Phone,
+  X
 } from 'lucide-react';
 
 interface Member {
   id: string;
   full_name: string;
   email: string;
+  phone: string;
   member_id: string;
   referral_code: string;
   referred_by: string;
@@ -65,8 +68,10 @@ export default function App() {
   const [regLoading, setRegLoading] = useState(false);
   const [tempCredentials, setTempCredentials] = useState<{ email: string; pass: string; memberId?: string } | null>(null);
 
-  // Manual slot credit state
+  // Manual slot credit state with member search
   const [selectedMemberId, setSelectedMemberId] = useState('');
+  const [memberPickerSearch, setMemberPickerSearch] = useState('');
+  const [isPickerOpen, setIsPickerOpen] = useState(false);
   const [creditCategory, setCreditCategory] = useState('Mushroom Village');
   const [creditSlots, setCreditSlots] = useState(1);
   const [creditLoading, setCreditLoading] = useState(false);
@@ -125,7 +130,7 @@ export default function App() {
         fetchData();
         fetchLegalConfig();
       } else {
-        // Fallback for local development if role column not yet populated
+        // Fallback for local development
         setIsAuthenticated(true);
         setCurrentAdmin({
           id: session.user.id,
@@ -165,6 +170,7 @@ export default function App() {
         id: p.id,
         full_name: p.full_name || 'Unnamed Member',
         email: p.email || `${p.referral_code?.toLowerCase() || p.id.slice(0, 5)}@agroheal.com`,
+        phone: p.phone || p.phone_number || '',
         member_id: p.member_id || 'No ID Assigned',
         referral_code: p.referral_code || '',
         referred_by: p.referred_by || '',
@@ -309,6 +315,7 @@ export default function App() {
         .from('profiles')
         .insert({
           full_name: regName.trim(),
+          phone: regPhone.trim(),
           referred_by: referrerId
         })
         .select()
@@ -319,7 +326,7 @@ export default function App() {
       setTempCredentials({
         email: regEmail,
         pass: generatedPassword,
-        memberId: newProfile.member_id || 'AGC-NEW-2026'
+        memberId: newProfile?.member_id || 'AGC-NEW-2026'
       });
 
       setSuccessMessage(`Member ${regName} registered successfully!`);
@@ -344,7 +351,6 @@ export default function App() {
     setRecoveryCredentials(null);
 
     try {
-      // Try Edge Function
       const { data: edgeRes, error: edgeErr } = await supabase.functions.invoke('admin-actions', {
         body: {
           action: 'reset_password',
@@ -363,7 +369,6 @@ export default function App() {
         return;
       }
 
-      // Fallback
       const fallbackPass = Math.random().toString(36).slice(-8) + 'Rx!8';
       setRecoveryCredentials({
         email: member.email,
@@ -396,7 +401,6 @@ export default function App() {
     setErrorMessage('');
 
     try {
-      // Try Edge Function
       const { data: edgeRes, error: edgeErr } = await supabase.functions.invoke('admin-actions', {
         body: {
           action: 'credit_slots',
@@ -409,6 +413,8 @@ export default function App() {
       if (!edgeErr && edgeRes?.success) {
         setSuccessMessage(`Successfully credited ${creditSlots} ${creditCategory} slots!`);
         setCreditSlots(1);
+        setSelectedMemberId('');
+        setMemberPickerSearch('');
         fetchData();
         return;
       }
@@ -455,6 +461,8 @@ export default function App() {
 
       setSuccessMessage(`Successfully credited ${creditSlots} ${creditCategory} slots!`);
       setCreditSlots(1);
+      setSelectedMemberId('');
+      setMemberPickerSearch('');
       fetchData();
 
     } catch (err: any) {
@@ -489,7 +497,6 @@ export default function App() {
         return;
       }
 
-      // Direct fallback
       await supabase.from('system_configs').upsert({
         key: 'legal_agreement',
         value: {
@@ -517,11 +524,26 @@ export default function App() {
     window.open(`https://wa.me/?text=${encoded}`, '_blank');
   };
 
-  const filteredMembers = members.filter(m => 
-    m.full_name.toLowerCase().includes(searchQuery.toLowerCase()) || 
-    m.email.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    m.member_id.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  // ── Search Filters (Name, Email, Phone, Member ID) ────────────────────────
+  const filterMemberPredicate = (m: Member, queryStr: string) => {
+    const query = queryStr.toLowerCase().trim();
+    if (!query) return true;
+    const cleanPhone = m.phone.replace(/[^0-9]/g, '');
+    const cleanQuery = query.replace(/[^0-9]/g, '');
+
+    return (
+      m.full_name.toLowerCase().includes(query) ||
+      m.email.toLowerCase().includes(query) ||
+      (cleanQuery.length >= 3 && cleanPhone.includes(cleanQuery)) ||
+      m.phone.toLowerCase().includes(query) ||
+      m.member_id.toLowerCase().includes(query) ||
+      m.referral_code.toLowerCase().includes(query)
+    );
+  };
+
+  const filteredMembers = members.filter(m => filterMemberPredicate(m, searchQuery));
+  const searchableSlotMembers = members.filter(m => filterMemberPredicate(m, memberPickerSearch));
+  const selectedMember = members.find(m => m.id === selectedMemberId);
 
   // ── Gating: If not logged in, show Login Screen ────────────────────────────
   if (authLoading) {
@@ -674,7 +696,7 @@ export default function App() {
               </div>
 
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(350px, 1fr))', gap: 24 }}>
-                {/* Manual Farm Slot Creditor */}
+                {/* Manual Farm Slot Creditor with Searchable Combobox */}
                 <div className="table-card" style={{ padding: 24 }}>
                   <span className="card-title" style={{ display: 'block', marginBottom: 16 }}>
                     Manual Farm Slot Creditor
@@ -682,28 +704,89 @@ export default function App() {
                   <form onSubmit={handleManualSlotCredit} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
                     <div>
                       <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 6 }}>
-                        Select Member
+                        Select Member (Search by Name, Email, or Phone)
                       </label>
-                      <select 
-                        value={selectedMemberId} 
-                        onChange={(e) => setSelectedMemberId(e.target.value)}
-                        style={{
-                          width: '100%',
-                          backgroundColor: 'var(--bg-primary)',
-                          border: '1px solid var(--border-color)',
-                          borderRadius: '8px',
-                          padding: '10px 12px',
-                          color: 'var(--text-primary)',
-                          fontSize: '14px',
-                          outline: 'none'
-                        }}
-                        required
-                      >
-                        <option value="">-- Choose Member --</option>
-                        {members.map(m => (
-                          <option key={m.id} value={m.id}>{m.full_name} ({m.member_id})</option>
-                        ))}
-                      </select>
+                      
+                      {selectedMember ? (
+                        <div className="selected-member-card">
+                          <div className="selected-member-info">
+                            <div className="selected-member-avatar">
+                              {selectedMember.full_name.charAt(0).toUpperCase()}
+                            </div>
+                            <div>
+                              <div style={{ fontWeight: 700, fontSize: 14 }}>{selectedMember.full_name}</div>
+                              <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+                                {selectedMember.email} {selectedMember.phone ? `• 📞 ${selectedMember.phone}` : ''}
+                              </div>
+                              <span className="member-picker-badge" style={{ marginTop: 4, display: 'inline-block' }}>
+                                {selectedMember.member_id}
+                              </span>
+                            </div>
+                          </div>
+                          <button 
+                            type="button" 
+                            onClick={() => {
+                              setSelectedMemberId('');
+                              setMemberPickerSearch('');
+                              setIsPickerOpen(true);
+                            }}
+                            className="button button-secondary"
+                            style={{ padding: '6px 10px', fontSize: 12, gap: 4 }}
+                          >
+                            <X size={13} /> Change
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="member-picker-container">
+                          <div className="input-wrapper">
+                            <Search size={16} className="input-icon" />
+                            <input
+                              type="text"
+                              placeholder="Type name, email, or phone (e.g. 080...)..."
+                              value={memberPickerSearch}
+                              onChange={(e) => {
+                                setMemberPickerSearch(e.target.value);
+                                setIsPickerOpen(true);
+                              }}
+                              onFocus={() => setIsPickerOpen(true)}
+                              required={!selectedMemberId}
+                            />
+                          </div>
+
+                          {isPickerOpen && (
+                            <div className="member-picker-dropdown">
+                              {searchableSlotMembers.map((m) => (
+                                <div
+                                  key={m.id}
+                                  className="member-picker-item"
+                                  onClick={() => {
+                                    setSelectedMemberId(m.id);
+                                    setIsPickerOpen(false);
+                                    setMemberPickerSearch('');
+                                  }}
+                                >
+                                  <div>
+                                    <div style={{ fontWeight: 600, fontSize: 13, color: 'var(--text-primary)' }}>
+                                      {m.full_name}
+                                    </div>
+                                    <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
+                                      {m.email} {m.phone ? `• 📞 ${m.phone}` : ''}
+                                    </div>
+                                  </div>
+                                  <span className="member-picker-badge">
+                                    {m.member_id}
+                                  </span>
+                                </div>
+                              ))}
+                              {searchableSlotMembers.length === 0 && (
+                                <div style={{ padding: '16px', textAlign: 'center', fontSize: 12, color: 'var(--text-muted)' }}>
+                                  No members found matching "{memberPickerSearch}"
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
 
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
@@ -764,7 +847,7 @@ export default function App() {
                       </div>
                     </div>
 
-                    <button type="submit" disabled={creditLoading} className="button" style={{ justifyContent: 'center' }}>
+                    <button type="submit" disabled={creditLoading || !selectedMemberId} className="button" style={{ justifyContent: 'center' }}>
                       {creditLoading ? 'Crediting Slots...' : 'Credit Slots to Dashboard'}
                     </button>
                   </form>
@@ -904,12 +987,12 @@ export default function App() {
               <div className="table-card">
                 <div className="card-header" style={{ flexDirection: 'row', gap: '16px', flexWrap: 'wrap' }}>
                   <span className="card-title">All Members ({filteredMembers.length})</span>
-                  <div style={{ display: 'flex', gap: '12px', flexGrow: 1, justifyContent: 'flex-end', maxWidth: '400px' }}>
+                  <div style={{ display: 'flex', gap: '12px', flexGrow: 1, justifyContent: 'flex-end', maxWidth: '440px' }}>
                     <div style={{ position: 'relative', width: '100%' }}>
                       <Search size={16} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
                       <input 
                         type="text" 
-                        placeholder="Search member name, email or ID..."
+                        placeholder="Search by Name, Email, Phone (080...), or ID..."
                         value={searchQuery}
                         onChange={(e) => setSearchQuery(e.target.value)}
                         style={{
@@ -944,6 +1027,11 @@ export default function App() {
                           <td>
                             <div style={{ fontWeight: 600 }}>{m.full_name}</div>
                             <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{m.email}</div>
+                            {m.phone && (
+                              <div style={{ fontSize: 12, color: '#34d399', display: 'flex', alignItems: 'center', gap: 4, marginTop: 2 }}>
+                                <Phone size={11} /> {m.phone}
+                              </div>
+                            )}
                           </td>
                           <td style={{ fontFamily: 'var(--mono)', fontSize: 13 }}>{m.member_id}</td>
                           <td>{m.created_at}</td>
@@ -964,7 +1052,7 @@ export default function App() {
                       {filteredMembers.length === 0 && (
                         <tr>
                           <td colSpan={6} style={{ textAlign: 'center', padding: '32px', color: 'var(--text-muted)' }}>
-                            No members found matching your search query.
+                            No members found matching "{searchQuery}".
                           </td>
                         </tr>
                       )}
