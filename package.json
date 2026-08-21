@@ -10,6 +10,12 @@
   "workspaces": [
     "apps/*"
   ],
+  "resolutions": {
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.3"
+  },
   "scripts": {
     "dev": "concurrently -n \"web,admin\" -c \"cyan,magenta\" \"yarn web:dev\" \"yarn admin:dev\"",
     "build": "yarn web:build && yarn admin:build",

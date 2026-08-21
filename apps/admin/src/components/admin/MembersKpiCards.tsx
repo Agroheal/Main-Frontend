@@ -1,0 +1,65 @@
+import { Users, ShieldCheck, AlertCircle, type LucideIcon } from "lucide-react";
+import { cn } from "@/lib/utils";
+import type { GreenCardFilter } from "@/lib/memberFilters";
+import type { Member } from "@/types/admin";
+
+interface Props {
+  members: Member[];
+  value: GreenCardFilter;
+  onChange: (v: GreenCardFilter) => void;
+}
+
+export function MembersKpiCards({ members, value, onChange }: Props) {
+  const total = members.length;
+  const active = members.filter((m) => m.has_green_card).length;
+  const pending = total - active;
+  const activePct = total > 0 ? Math.round((active / total) * 100) : 0;
+
+  const cards: { key: GreenCardFilter; icon: LucideIcon; iconClass: string; value: number; label: string }[] = [
+    {
+      key: "all",
+      icon: Users,
+      iconClass: "bg-primary/15 text-primary",
+      value: total,
+      label: "Total Registered Members",
+    },
+    {
+      key: "active",
+      icon: ShieldCheck,
+      iconClass: "bg-emerald-400/15 text-emerald-400",
+      value: active,
+      label: `Green Card Active (${activePct}%)`,
+    },
+    {
+      key: "unpaid",
+      icon: AlertCircle,
+      iconClass: "bg-amber-400/15 text-amber-400",
+      value: pending,
+      label: "Pending / Needs Green Card",
+    },
+  ];
+
+  return (
+    <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+      {cards.map((c) => (
+        <button
+          key={c.key}
+          type="button"
+          onClick={() => onChange(c.key)}
+          className={cn(
+            "flex items-center gap-3 rounded-xl border bg-card p-4 text-left transition-colors hover:border-primary/40",
+            value === c.key ? "border-primary/60 ring-1 ring-primary/30" : "border-border",
+          )}
+        >
+          <span className={cn("flex h-10 w-10 shrink-0 items-center justify-center rounded-lg", c.iconClass)}>
+            <c.icon className="h-5 w-5" />
+          </span>
+          <span>
+            <span className="block text-xl font-semibold text-foreground">{c.value}</span>
+            <span className="block text-xs text-muted-foreground">{c.label}</span>
+          </span>
+        </button>
+      ))}
+    </div>
+  );
+}

@@ -1,0 +1,32 @@
+export interface MemberSlotSummary {
+  category: string;
+  slots: number;
+  status: string;
+}
+
+export interface Member {
+  id: string;
+  full_name: string;
+  email: string;
+  phone: string;
+  member_id: string;
+  referral_code: string;
+  referred_by: string;
+  role?: string;
+  created_at: string;
+  has_green_card: boolean;
+  green_card_expires_at?: string;
+  total_slots: number;
+  slots_by_program: MemberSlotSummary[];
+}
+
+export interface PaymentLog {
+  id: string;
+  user_email: string;
+  amount: number;
+  project_category: string;
+  created_at: string;
+  slots: number;
+  status: string;
+  type: "slot_subscription" | "other_payment";
+}
