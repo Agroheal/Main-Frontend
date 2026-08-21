@@ -25,7 +25,12 @@ import {
   UserCog,
   Save,
   KeyRound,
-  Filter
+  Filter,
+  IdCard,
+  Menu,
+  LayoutGrid,
+  Table as TableIcon,
+  Mail
 } from 'lucide-react';
 
 interface MemberSlotSummary {
@@ -44,6 +49,8 @@ interface Member {
   referred_by: string;
   role?: string;
   created_at: string;
+  has_green_card: boolean;
+  green_card_expires_at?: string;
   total_slots: number;
   slots_by_program: MemberSlotSummary[];
 }
@@ -67,13 +74,27 @@ export default function App() {
 
   // Tab & Data State
   const [activeTab, setActiveTab] = useState<'dashboard' | 'members' | 'payments' | 'settings'>('dashboard');
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [memberViewMode, setMemberViewMode] = useState<'auto' | 'table' | 'cards'>('auto');
   const [searchQuery, setSearchQuery] = useState('');
   const [programFilter, setProgramFilter] = useState('all');
+  const [greenCardFilter, setGreenCardFilter] = useState<'all' | 'active' | 'unpaid'>('all');
+  const [activatingMemberId, setActivatingMemberId] = useState<string | null>(null);
   const [members, setMembers] = useState<Member[]>([]);
   const [paymentLogs, setPaymentLogs] = useState<PaymentLog[]>([]);
   const [loading, setLoading] = useState(false);
   const [successMessage, setSuccessMessage] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
+
+  // Issue Green Card Dialog / Modal state
+  const [isIssueModalOpen, setIsIssueModalOpen] = useState(false);
+  const [issueMemberSearch, setIssueMemberSearch] = useState('');
+  const [issueSelectedMemberId, setIssueSelectedMemberId] = useState('');
+  const [isIssuePickerOpen, setIsIssuePickerOpen] = useState(false);
+  const [issuedGreenCardDetails, setIssuedGreenCardDetails] = useState<{
+    member: Member;
+    memberId: string;
+  } | null>(null);
 
   // Offline registration state
   const [regName, setRegName] = useState('');
@@ -94,6 +115,7 @@ export default function App() {
   // Edit Member Profile Modal State
   const [editingMember, setEditingMember] = useState<Member | null>(null);
   const [editFullName, setEditFullName] = useState('');
+  const [editEmail, setEditEmail] = useState('');
   const [editPhone, setEditPhone] = useState('');
   const [editMemberId, setEditMemberId] = useState('');
   const [editReferralCode, setEditReferralCode] = useState('');
@@ -199,11 +221,18 @@ export default function App() {
   const fetchData = async () => {
     setLoading(true);
     try {
-      // 1. Fetch profiles, slots, and other payments concurrently
-      const [profilesRes, slotsRes, otherPayRes] = await Promise.all([
-        supabase.from('profiles').select('*').order('created_at', { ascending: false }),
+      // 1. Fetch profiles, slots, other payments, and green card subscriptions concurrently
+      const [profilesRes, slotsRes, otherPayRes, subscriptionsRes] = await Promise.all([
+        supabase.rpc('get_admin_members').then((res) => {
+          if (res.error) {
+            // Fallback to direct profiles table query if RPC is not yet registered
+            return supabase.from('profiles').select('*').order('created_at', { ascending: false });
+          }
+          return res;
+        }),
         supabase.from('slot_subscriptions').select('*').order('last_payment_date', { ascending: false }),
-        supabase.from('other_payments').select('*').order('created_at', { ascending: false })
+        supabase.from('other_payments').select('*').order('created_at', { ascending: false }),
+        supabase.from('subscriptions').select('*').eq('plan', 'green_card')
       ]);
 
       if (profilesRes.error) throw profilesRes.error;
@@ -213,10 +242,13 @@ export default function App() {
       const profiles = profilesRes.data || [];
       const slots = slotsRes.data || [];
       const otherPayments = otherPayRes.data || [];
+      const subscriptions = subscriptionsRes?.data || [];
 
-      // 2. Map members with calculated slot holdings per program
+      // 2. Map members with calculated slot holdings per program & green card status
       const mappedMembers: Member[] = profiles.map((p: any) => {
         const userSlots = slots.filter((s: any) => s.user_id === p.id && s.status === 'active');
+        const userGreenCard = subscriptions.find((s: any) => s.user_id === p.id && s.status === 'active' && new Date(s.expires_at) > new Date());
+        const hasGreenCard = Boolean(userGreenCard || (p.member_id && p.member_id.startsWith('AGC-')));
         
         const programMap: Record<string, { category: string; slots: number; status: string }> = {};
         let totalSlots = 0;
@@ -235,13 +267,15 @@ export default function App() {
         return {
           id: p.id,
           full_name: p.full_name || 'Unnamed Member',
-          email: p.email || `${p.referral_code?.toLowerCase() || p.id.slice(0, 5)}@agroheal.com`,
+          email: p.email || (p.phone || p.phone_number ? `Phone: ${p.phone || p.phone_number}` : 'No Email'),
           phone: p.phone || p.phone_number || '',
           member_id: p.member_id || 'No ID Assigned',
           referral_code: p.referral_code || '',
           referred_by: p.referred_by || '',
           role: p.role || 'user',
           created_at: p.created_at ? new Date(p.created_at).toLocaleDateString() : 'N/A',
+          has_green_card: hasGreenCard,
+          green_card_expires_at: userGreenCard?.expires_at,
           total_slots: totalSlots,
           slots_by_program: Object.values(programMap)
         };
@@ -318,11 +352,136 @@ export default function App() {
   const startEditingMember = (member: Member) => {
     setEditingMember(member);
     setEditFullName(member.full_name || '');
+    setEditEmail(member.email === 'No Email' ? '' : member.email);
     setEditPhone(member.phone || '');
     setEditMemberId(member.member_id === 'No ID Assigned' ? '' : member.member_id);
     setEditReferralCode(member.referral_code || '');
     setEditRole(member.role || 'user');
     setErrorMessage('');
+  };
+
+  // ── Manual Green Card Activation (Offline Payment) ───────────────────────
+  const handleActivateGreenCard = async (member: Member, skipConfirm = false) => {
+    if (!skipConfirm && !confirm(`Confirm offline payment (₦1,000) and issue Green Card status for ${member.full_name}?`)) {
+      return;
+    }
+
+    setActivatingMemberId(member.id);
+    setErrorMessage('');
+    setSuccessMessage('');
+
+    try {
+      let resolvedMemberId = member.member_id !== 'No ID Assigned' ? member.member_id : '';
+
+      // 1. Try DB RPC first
+      const { data: rpcRes, error: rpcErr } = await supabase.rpc('admin_activate_green_card', {
+        p_user_id: member.id,
+        p_credit_referrer: true
+      });
+
+      if (!rpcErr && rpcRes?.success) {
+        resolvedMemberId = rpcRes.member_id || resolvedMemberId || 'Assigned';
+        setSuccessMessage(`Green Card successfully issued to ${member.full_name}! Member ID: ${resolvedMemberId}`);
+        setIssuedGreenCardDetails({
+          member: { ...member, member_id: resolvedMemberId, has_green_card: true },
+          memberId: resolvedMemberId
+        });
+        setIsIssueModalOpen(false);
+        setIssueSelectedMemberId('');
+        if (editingMember && editingMember.id === member.id) {
+          setEditingMember({
+            ...editingMember,
+            has_green_card: true,
+            member_id: resolvedMemberId
+          });
+        }
+        await fetchData();
+        return;
+      }
+
+      // 2. Try Edge Function
+      const { data: edgeRes, error: edgeErr } = await supabase.functions.invoke('admin-actions', {
+        body: {
+          action: 'activate_green_card',
+          user_id: member.id
+        }
+      });
+
+      if (!edgeErr && edgeRes?.success) {
+        resolvedMemberId = edgeRes.data.member_id || resolvedMemberId || 'Assigned';
+        setSuccessMessage(`Green Card successfully issued to ${member.full_name}! Member ID: ${resolvedMemberId}`);
+        setIssuedGreenCardDetails({
+          member: { ...member, member_id: resolvedMemberId, has_green_card: true },
+          memberId: resolvedMemberId
+        });
+        setIsIssueModalOpen(false);
+        setIssueSelectedMemberId('');
+        if (editingMember && editingMember.id === member.id) {
+          setEditingMember({
+            ...editingMember,
+            has_green_card: true,
+            member_id: resolvedMemberId
+          });
+        }
+        await fetchData();
+        return;
+      }
+
+      // 3. Fallback: Direct database updates
+      const { data: memberId } = await supabase.rpc('get_or_create_green_card_member_id', {
+        p_user_id: member.id,
+        p_join_year: new Date().getFullYear()
+      });
+
+      resolvedMemberId = memberId || resolvedMemberId || 'AGC-NEW-2026';
+
+      const oneYearFromNow = new Date();
+      oneYearFromNow.setFullYear(oneYearFromNow.getFullYear() + 1);
+
+      await supabase.from('subscriptions').delete().eq('user_id', member.id).eq('plan', 'green_card');
+      const { error: subErr } = await supabase.from('subscriptions').insert({
+        user_id: member.id,
+        plan: 'green_card',
+        status: 'active',
+        started_at: new Date().toISOString(),
+        expires_at: oneYearFromNow.toISOString()
+      });
+
+      if (subErr) throw subErr;
+
+      const txRef = `ADMIN_GC_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+      await supabase.from('other_payments').insert({
+        user_id: member.id,
+        payment_type: 'green_card_offline',
+        amount: 1000,
+        slots: 0,
+        project_category: 'Green Card Membership (Admin Offline Activation)',
+        status: 'success',
+        transaction_ref: txRef
+      });
+
+      setSuccessMessage(`Green Card successfully issued to ${member.full_name}! Member ID: ${resolvedMemberId}`);
+      setIssuedGreenCardDetails({
+        member: { ...member, member_id: resolvedMemberId, has_green_card: true },
+        memberId: resolvedMemberId
+      });
+      setIsIssueModalOpen(false);
+      setIssueSelectedMemberId('');
+      if (editingMember && editingMember.id === member.id) {
+        setEditingMember({
+          ...editingMember,
+          has_green_card: true,
+          member_id: resolvedMemberId
+        });
+      }
+      await fetchData();
+
+    } catch (err: any) {
+      console.error(err);
+      setErrorMessage(err.message || 'Failed to activate Green Card.');
+    } finally {
+      setActivatingMemberId(null);
+    }
   };
 
   // ── Save Edited Member Profile ────────────────────────────────────────────
@@ -344,6 +503,7 @@ export default function App() {
           action: 'update_member',
           user_id: editingMember.id,
           full_name: editFullName.trim(),
+          email: editEmail.trim().toLowerCase() || undefined,
           phone: editPhone.trim(),
           member_id: editMemberId.trim() || undefined,
           referral_code: editReferralCode.trim() || undefined,
@@ -363,6 +523,7 @@ export default function App() {
         .from('profiles')
         .update({
           full_name: editFullName.trim(),
+          email: editEmail.trim().toLowerCase() || null,
           phone: editPhone.trim(),
           member_id: editMemberId.trim() || null,
           referral_code: editReferralCode.trim().toUpperCase() || null,
@@ -439,6 +600,7 @@ export default function App() {
       const { data: newProfile, error: profErr } = await supabase
         .from('profiles')
         .insert({
+          email: regEmail.trim().toLowerCase(),
           full_name: regName.trim(),
           phone: regPhone.trim(),
           referred_by: referrerId
@@ -666,6 +828,9 @@ export default function App() {
 
     if (!textMatch) return false;
 
+    if (greenCardFilter === 'active' && !m.has_green_card) return false;
+    if (greenCardFilter === 'unpaid' && m.has_green_card) return false;
+
     if (programFilter === 'has_slots') {
       return m.total_slots > 0;
     }
@@ -695,6 +860,21 @@ export default function App() {
   });
   const selectedMember = members.find(m => m.id === selectedMemberId);
 
+  const searchableIssueMembers = members.filter(m => {
+    const q = issueMemberSearch.toLowerCase().trim();
+    if (!q) return true;
+    const cleanPhone = m.phone.replace(/[^0-9]/g, '');
+    const cleanQuery = q.replace(/[^0-9]/g, '');
+    return (
+      m.full_name.toLowerCase().includes(q) ||
+      m.email.toLowerCase().includes(q) ||
+      (cleanQuery.length >= 3 && cleanPhone.includes(cleanQuery)) ||
+      m.phone.toLowerCase().includes(q) ||
+      m.member_id.toLowerCase().includes(q)
+    );
+  });
+  const issueSelectedMember = members.find(m => m.id === issueSelectedMemberId);
+
   // ── Gating: If not logged in, show Login Screen ────────────────────────────
   if (authLoading) {
     return (
@@ -713,18 +893,36 @@ export default function App() {
 
   return (
     <div className="dashboard-container">
+      {/* Mobile Sidebar Backdrop */}
+      {mobileNavOpen && (
+        <div 
+          className="sidebar-backdrop" 
+          onClick={() => setMobileNavOpen(false)} 
+          aria-hidden="true" 
+        />
+      )}
+
       {/* Sidebar */}
-      <aside className="sidebar">
-        <div className="logo-section">
-          <Sprout className="logo-icon" size={28} color="#10b981" />
-          <span className="logo-text">Agroheal Admin</span>
+      <aside className={`sidebar ${mobileNavOpen ? 'mobile-open' : ''}`}>
+        <div className="logo-section" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <Sprout className="logo-icon" size={28} color="#10b981" />
+            <span className="logo-text">Agroheal Admin</span>
+          </div>
+          <button 
+            className="mobile-close-btn"
+            onClick={() => setMobileNavOpen(false)}
+            aria-label="Close Navigation"
+          >
+            <X size={20} />
+          </button>
         </div>
 
         <nav>
           <ul className="nav-links">
             <li>
               <button 
-                onClick={() => setActiveTab('dashboard')} 
+                onClick={() => { setActiveTab('dashboard'); setMobileNavOpen(false); }} 
                 className={`nav-item ${activeTab === 'dashboard' ? 'active' : ''}`}
               >
                 <LayoutDashboard size={18} />
@@ -733,7 +931,7 @@ export default function App() {
             </li>
             <li>
               <button 
-                onClick={() => setActiveTab('members')} 
+                onClick={() => { setActiveTab('members'); setMobileNavOpen(false); }} 
                 className={`nav-item ${activeTab === 'members' ? 'active' : ''}`}
               >
                 <Users size={18} />
@@ -742,7 +940,7 @@ export default function App() {
             </li>
             <li>
               <button 
-                onClick={() => setActiveTab('payments')} 
+                onClick={() => { setActiveTab('payments'); setMobileNavOpen(false); }} 
                 className={`nav-item ${activeTab === 'payments' ? 'active' : ''}`}
               >
                 <CreditCard size={18} />
@@ -751,7 +949,7 @@ export default function App() {
             </li>
             <li>
               <button 
-                onClick={() => setActiveTab('settings')} 
+                onClick={() => { setActiveTab('settings'); setMobileNavOpen(false); }} 
                 className={`nav-item ${activeTab === 'settings' ? 'active' : ''}`}
               >
                 <SettingsIcon size={18} />
@@ -775,17 +973,26 @@ export default function App() {
       {/* Main Content Area */}
       <main className="main-content">
         <header className="header">
-          <div className="header-title">
-            <h2>
-              {activeTab === 'dashboard' && 'Dashboard Overview'}
-              {activeTab === 'members' && 'Member Directory & Slot Holdings'}
-              {activeTab === 'payments' && 'Operations & Payment Logs'}
-              {activeTab === 'settings' && 'System Documents & Terms'}
-            </h2>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <button 
+              className="hamburger-btn"
+              onClick={() => setMobileNavOpen(true)}
+              aria-label="Open Navigation"
+            >
+              <Menu size={22} />
+            </button>
+            <div className="header-title">
+              <h2>
+                {activeTab === 'dashboard' && 'Dashboard'}
+                {activeTab === 'members' && 'Members'}
+                {activeTab === 'payments' && 'Operations'}
+                {activeTab === 'settings' && 'Documents'}
+              </h2>
+            </div>
           </div>
           <div className="header-actions">
-            <button className="button button-secondary" onClick={fetchData} style={{ padding: '8px 12px' }}>
-              <RefreshCw size={14} className={loading ? 'spin' : ''} /> Refresh
+            <button className="button button-secondary header-refresh-btn" onClick={fetchData} style={{ padding: '8px 12px' }}>
+              <RefreshCw size={14} className={loading ? 'spin' : ''} /> <span className="header-btn-text">Refresh</span>
             </button>
             <div className="user-profile">
               <div className="user-info">
@@ -814,7 +1021,7 @@ export default function App() {
           {/* ── Dashboard Tab ─────────────────────────────────────────────── */}
           {activeTab === 'dashboard' && (
             <>
-              <div className="stats-grid">
+              <div className="stats-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
                 <div className="stat-card">
                   <div className="stat-header">
                     <span>Registered Members</span>
@@ -822,6 +1029,19 @@ export default function App() {
                   </div>
                   <span className="stat-value">{members.length}</span>
                   <div className="stat-footer">Total member profiles</div>
+                </div>
+
+                <div className="stat-card">
+                  <div className="stat-header">
+                    <span>Green Card Holders</span>
+                    <ShieldCheck size={16} color="#10b981" />
+                  </div>
+                  <span className="stat-value">
+                    {members.filter(m => m.has_green_card).length}
+                  </span>
+                  <div className="stat-footer">
+                    {members.filter(m => !m.has_green_card).length} unpaid / pending
+                  </div>
                 </div>
 
                 <div className="stat-card">
@@ -845,7 +1065,7 @@ export default function App() {
                 </div>
               </div>
 
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(350px, 1fr))', gap: 24 }}>
+              <div className="dashboard-grid-dual">
                 {/* Manual Farm Slot Creditor with Searchable Combobox */}
                 <div className="table-card" style={{ padding: 24 }}>
                   <span className="card-title" style={{ display: 'block', marginBottom: 16 }}>
@@ -957,7 +1177,7 @@ export default function App() {
                       )}
                     </div>
 
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                    <div className="form-row-dual">
                       <div>
                         <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 6 }}>
                           Project Category
@@ -1151,152 +1371,446 @@ export default function App() {
 
           {/* ── Members Tab ───────────────────────────────────────────────── */}
           {activeTab === 'members' && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
-              <div className="table-card">
-                <div className="card-header" style={{ flexDirection: 'row', gap: '16px', flexWrap: 'wrap' }}>
-                  <div>
-                    <span className="card-title">All Members ({filteredMembers.length})</span>
-                    <span style={{ fontSize: 12, color: 'var(--text-secondary)', marginLeft: 8 }}>
-                      Total Platform Leased Slots: <strong>{members.reduce((sum, m) => sum + m.total_slots, 0)}</strong>
-                    </span>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+              
+              {/* Interactive KPI Summary & Quick Filter Cards */}
+              <div className="members-kpi-grid">
+                <div 
+                  className={`members-kpi-card ${greenCardFilter === 'all' ? 'active-filter' : ''}`}
+                  onClick={() => setGreenCardFilter('all')}
+                  title="Click to view all registered members"
+                >
+                  <div className="members-kpi-icon" style={{ backgroundColor: 'rgba(16, 185, 129, 0.15)', color: '#10b981' }}>
+                    <Users size={22} />
                   </div>
+                  <div>
+                    <div className="members-kpi-value">{members.length}</div>
+                    <div className="members-kpi-label">Total Registered Members</div>
+                  </div>
+                </div>
 
-                  <div style={{ display: 'flex', gap: '12px', flexGrow: 1, justifyContent: 'flex-end', maxWidth: '640px', flexWrap: 'wrap' }}>
-                    {/* Program Filter */}
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                      <Filter size={14} style={{ color: 'var(--text-muted)' }} />
-                      <select
-                        value={programFilter}
-                        onChange={(e) => setProgramFilter(e.target.value)}
-                        style={{
-                          backgroundColor: 'var(--bg-primary)',
-                          border: '1px solid var(--border-color)',
-                          borderRadius: '8px',
-                          padding: '8px 12px',
-                          color: 'var(--text-primary)',
-                          fontSize: '13px',
-                          outline: 'none'
-                        }}
-                      >
-                        <option value="all">All Programs</option>
-                        <option value="has_slots">🌱 Has Active Slots ({members.filter(m => m.total_slots > 0).length})</option>
-                        <option value="no_slots">0 Slots ({members.filter(m => m.total_slots === 0).length})</option>
-                        <option value="Mushroom">🍄 Mushroom Village</option>
-                        <option value="Sweet Potato">🍠 Sweet Potato Village</option>
-                        <option value="Ginger">🌿 Ginger Village</option>
-                      </select>
-                    </div>
-
-                    {/* Search Input */}
-                    <div style={{ position: 'relative', minWidth: '260px', flexGrow: 1 }}>
-                      <Search size={16} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
-                      <input 
-                        type="text" 
-                        placeholder="Search by Name, Email, Phone, ID..."
-                        value={searchQuery}
-                        onChange={(e) => setSearchQuery(e.target.value)}
-                        style={{
-                          width: '100%',
-                          backgroundColor: 'var(--bg-primary)',
-                          border: '1px solid var(--border-color)',
-                          borderRadius: '8px',
-                          padding: '9px 12px 9px 36px',
-                          color: 'var(--text-primary)',
-                          fontSize: '13px',
-                          outline: 'none'
-                        }}
-                      />
+                <div 
+                  className={`members-kpi-card ${greenCardFilter === 'active' ? 'active-filter' : ''}`}
+                  onClick={() => setGreenCardFilter('active')}
+                  title="Click to view active Green Card holders"
+                >
+                  <div className="members-kpi-icon" style={{ backgroundColor: 'rgba(52, 211, 153, 0.15)', color: '#34d399' }}>
+                    <ShieldCheck size={22} />
+                  </div>
+                  <div>
+                    <div className="members-kpi-value">{members.filter(m => m.has_green_card).length}</div>
+                    <div className="members-kpi-label">
+                      Green Card Active ({members.length > 0 ? Math.round((members.filter(m => m.has_green_card).length / members.length) * 100) : 0}%)
                     </div>
                   </div>
                 </div>
 
-                <div className="data-table-wrapper">
-                  <table className="data-table">
-                    <thead>
-                      <tr>
-                        <th>Member Details</th>
-                        <th>Member ID</th>
-                        <th>Role</th>
-                        <th>Subscribed Programs & Slots</th>
-                        <th>Referral Code</th>
-                        <th>Referred By</th>
-                        <th>Joined</th>
-                        <th style={{ textAlign: 'right' }}>Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {filteredMembers.map(m => (
-                        <tr key={m.id}>
-                          <td>
-                            <div style={{ fontWeight: 600 }}>{m.full_name}</div>
-                            <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{m.email}</div>
-                            {m.phone && (
-                              <div style={{ fontSize: 12, color: '#34d399', display: 'flex', alignItems: 'center', gap: 4, marginTop: 2 }}>
-                                <Phone size={11} /> {m.phone}
-                              </div>
-                            )}
-                          </td>
-                          <td style={{ fontFamily: 'var(--mono)', fontSize: 13 }}>{m.member_id}</td>
-                          <td>
-                            <span className={`status-badge ${m.role === 'admin' ? 'status-active' : 'status-pending'}`} style={{ fontSize: 11, padding: '2px 8px' }}>
-                              {m.role || 'user'}
-                            </span>
-                          </td>
-                          <td>
-                            {m.total_slots > 0 ? (
-                              <div>
-                                <span className="slot-badge-total">
-                                  <Sprout size={12} /> {m.total_slots} {m.total_slots === 1 ? 'Slot' : 'Slots'}
-                                </span>
-                                <div className="program-pills-container">
-                                  {m.slots_by_program.map((prog, idx) => (
-                                    <span key={idx} className={`program-pill ${getProgramPillClass(prog.category)}`}>
-                                      {getProgramEmoji(prog.category)} {prog.category.replace(' Village', '')}: <strong>{prog.slots}</strong>
-                                    </span>
-                                  ))}
-                                </div>
-                              </div>
-                            ) : (
-                              <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>0 Slots</span>
-                            )}
-                          </td>
-                          <td style={{ fontFamily: 'var(--mono)' }}>{m.referral_code || 'N/A'}</td>
-                          <td style={{ fontSize: 12 }}>{m.referred_by || 'Direct'}</td>
-                          <td style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{m.created_at}</td>
-                          <td style={{ textAlign: 'right' }}>
-                            <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
-                              <button 
-                                onClick={() => startEditingMember(m)}
-                                className="button button-secondary"
-                                style={{ padding: '6px 10px', fontSize: 12, gap: 4 }}
-                                title="Edit Profile Details"
-                              >
-                                <Edit3 size={13} /> Edit
-                              </button>
-                              <button 
-                                onClick={() => handlePasswordReset(m)} 
-                                disabled={recoveryLoading}
-                                className="button button-secondary"
-                                style={{ padding: '6px 10px', fontSize: 12, gap: 4 }}
-                                title="Reset Password"
-                              >
-                                <KeyRound size={13} /> Reset
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                      {filteredMembers.length === 0 && (
-                        <tr>
-                          <td colSpan={8} style={{ textAlign: 'center', padding: '32px', color: 'var(--text-muted)' }}>
-                            No members found matching the current search / filter criteria.
-                          </td>
-                        </tr>
-                      )}
-                    </tbody>
-                  </table>
+                <div 
+                  className={`members-kpi-card ${greenCardFilter === 'unpaid' ? 'active-filter' : ''}`}
+                  onClick={() => setGreenCardFilter('unpaid')}
+                  title="Click to view members who haven't paid for Green Card yet"
+                >
+                  <div className="members-kpi-icon" style={{ backgroundColor: 'rgba(245, 158, 11, 0.15)', color: '#fbbf24' }}>
+                    <AlertCircle size={22} />
+                  </div>
+                  <div>
+                    <div className="members-kpi-value">{members.filter(m => !m.has_green_card).length}</div>
+                    <div className="members-kpi-label">Pending / Needs Green Card</div>
+                  </div>
                 </div>
               </div>
+
+              {/* Members Unified Toolbar */}
+              <div className="members-toolbar">
+                <div className="members-toolbar-search">
+                  {/* Search Input */}
+                  <div style={{ position: 'relative', flex: '1 1 240px' }}>
+                    <Search size={16} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
+                    <input 
+                      type="text" 
+                      placeholder="Search Name, Email, Phone, Member ID..."
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      style={{
+                        width: '100%',
+                        backgroundColor: 'var(--bg-primary)',
+                        border: '1px solid var(--border-color)',
+                        borderRadius: '8px',
+                        padding: '9px 12px 9px 36px',
+                        color: 'var(--text-primary)',
+                        fontSize: '13px',
+                        outline: 'none'
+                      }}
+                    />
+                  </div>
+
+                  {/* Program Filter */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+                    <Filter size={14} style={{ color: 'var(--text-muted)' }} />
+                    <select
+                      value={programFilter}
+                      onChange={(e) => setProgramFilter(e.target.value)}
+                      style={{
+                        backgroundColor: 'var(--bg-primary)',
+                        border: '1px solid var(--border-color)',
+                        borderRadius: '8px',
+                        padding: '8px 12px',
+                        color: 'var(--text-primary)',
+                        fontSize: '13px',
+                        outline: 'none'
+                      }}
+                    >
+                      <option value="all">All Programs</option>
+                      <option value="has_slots">🌱 Has Active Slots ({members.filter(m => m.total_slots > 0).length})</option>
+                      <option value="no_slots">0 Slots ({members.filter(m => m.total_slots === 0).length})</option>
+                      <option value="Mushroom">🍄 Mushroom</option>
+                      <option value="Sweet Potato">🍠 Sweet Potato</option>
+                      <option value="Ginger">🌿 Ginger</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="members-toolbar-actions">
+                  {/* View Mode Toggle */}
+                  <div className="view-mode-toggle">
+                    <button
+                      type="button"
+                      className={`view-mode-btn ${memberViewMode === 'table' ? 'active' : ''}`}
+                      onClick={() => setMemberViewMode('table')}
+                      title="Force Table View"
+                    >
+                      <TableIcon size={14} /> <span className="header-btn-text">Table</span>
+                    </button>
+                    <button
+                      type="button"
+                      className={`view-mode-btn ${memberViewMode === 'cards' ? 'active' : ''}`}
+                      onClick={() => setMemberViewMode('cards')}
+                      title="Force Card View"
+                    >
+                      <LayoutGrid size={14} /> <span className="header-btn-text">Cards</span>
+                    </button>
+                    <button
+                      type="button"
+                      className={`view-mode-btn ${memberViewMode === 'auto' ? 'active' : ''}`}
+                      onClick={() => setMemberViewMode('auto')}
+                      title="Auto Adaptive (Table on Desktop, Cards on Mobile)"
+                    >
+                      <span>Auto</span>
+                    </button>
+                  </div>
+
+                  {/* Primary Action Button */}
+                  <button 
+                    type="button"
+                    onClick={() => {
+                      setIsIssueModalOpen(true);
+                      setIssueMemberSearch('');
+                      setIssueSelectedMemberId('');
+                    }}
+                    className="button"
+                    style={{
+                      padding: '9px 16px',
+                      fontSize: '13px',
+                      gap: '6px',
+                      backgroundColor: 'var(--accent-color)',
+                      color: '#064e3b',
+                      fontWeight: 700,
+                      whiteSpace: 'nowrap'
+                    }}
+                  >
+                    <IdCard size={16} /> Issue Green Card
+                  </button>
+                </div>
+              </div>
+
+              {/* ── 1. Desktop & Tablet Table View ── */}
+              {(memberViewMode === 'table' || memberViewMode === 'auto') && (
+                <div className={`table-card ${memberViewMode === 'auto' ? 'desktop-table-container' : ''}`}>
+                  <div className="card-header" style={{ flexDirection: 'row', gap: '16px', flexWrap: 'wrap' }}>
+                    <div>
+                      <span className="card-title">Directory Records ({filteredMembers.length})</span>
+                      <span style={{ fontSize: 12, color: 'var(--text-secondary)', marginLeft: 8 }}>
+                        Total Leased Slots: <strong>{members.reduce((sum, m) => sum + m.total_slots, 0)}</strong>
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="data-table-wrapper">
+                    <table className="data-table">
+                      <thead>
+                        <tr>
+                          <th>Member Details</th>
+                          <th>Green Card Status & ID</th>
+                          <th>Role</th>
+                          <th>Subscribed Programs & Slots</th>
+                          <th>Referral Code</th>
+                          <th>Referred By</th>
+                          <th>Joined</th>
+                          <th style={{ textAlign: 'right' }}>Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {filteredMembers.map(m => (
+                          <tr key={m.id}>
+                            <td>
+                              <div style={{ fontWeight: 700, fontSize: 14 }}>{m.full_name}</div>
+                              <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{m.email}</div>
+                              {m.phone && (
+                                <div style={{ fontSize: 12, color: '#34d399', display: 'flex', alignItems: 'center', gap: 4, marginTop: 2 }}>
+                                  <Phone size={11} /> {m.phone}
+                                </div>
+                              )}
+                            </td>
+                            <td>
+                              {m.has_green_card ? (
+                                <div>
+                                  <span className="status-badge status-active" style={{ fontSize: 11, padding: '3px 8px', gap: 4, fontWeight: 700 }}>
+                                    <ShieldCheck size={12} /> Active Green Card
+                                  </span>
+                                  <div style={{ fontFamily: 'var(--mono)', fontSize: 12, marginTop: 4, color: 'var(--text-primary)', fontWeight: 600 }}>
+                                    {m.member_id}
+                                  </div>
+                                </div>
+                              ) : (
+                                <div>
+                                  <span className="status-badge" style={{ fontSize: 11, padding: '3px 8px', gap: 4, backgroundColor: 'rgba(239, 68, 68, 0.12)', color: '#f87171', border: '1px solid rgba(239, 68, 68, 0.25)', fontWeight: 700 }}>
+                                    <AlertCircle size={12} /> No Green Card
+                                  </span>
+                                  <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
+                                    Unpaid / Not Issued
+                                  </div>
+                                </div>
+                              )}
+                            </td>
+                            <td>
+                              <span className={`status-badge ${m.role === 'admin' ? 'status-active' : 'status-pending'}`} style={{ fontSize: 11, padding: '2px 8px' }}>
+                                {m.role || 'user'}
+                              </span>
+                            </td>
+                            <td>
+                              {m.total_slots > 0 ? (
+                                <div>
+                                  <span className="slot-badge-total">
+                                    <Sprout size={12} /> {m.total_slots} {m.total_slots === 1 ? 'Slot' : 'Slots'}
+                                  </span>
+                                  <div className="program-pills-container">
+                                    {m.slots_by_program.map((prog, idx) => (
+                                      <span key={idx} className={`program-pill ${getProgramPillClass(prog.category)}`}>
+                                        {getProgramEmoji(prog.category)} {prog.category.replace(' Village', '')}: <strong>{prog.slots}</strong>
+                                      </span>
+                                    ))}
+                                  </div>
+                                </div>
+                              ) : (
+                                <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>0 Slots</span>
+                              )}
+                            </td>
+                            <td style={{ fontFamily: 'var(--mono)', fontSize: 12 }}>{m.referral_code || 'N/A'}</td>
+                            <td style={{ fontSize: 12 }}>{m.referred_by || 'Direct'}</td>
+                            <td style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{m.created_at}</td>
+                            <td style={{ textAlign: 'right' }}>
+                              <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+                                {!m.has_green_card && (
+                                  <button 
+                                    onClick={() => handleActivateGreenCard(m)}
+                                    disabled={activatingMemberId === m.id}
+                                    className="button"
+                                    style={{ 
+                                      padding: '6px 10px', 
+                                      fontSize: 12, 
+                                      gap: 4,
+                                      backgroundColor: 'rgba(16, 185, 129, 0.2)',
+                                      color: '#34d399',
+                                      border: '1px solid rgba(16, 185, 129, 0.4)',
+                                      fontWeight: 600
+                                    }}
+                                    title="Confirm offline payment (₦1,000) and issue Green Card"
+                                  >
+                                    <IdCard size={13} /> {activatingMemberId === m.id ? 'Issuing...' : 'Issue Green Card'}
+                                  </button>
+                                )}
+                                <button 
+                                  onClick={() => startEditingMember(m)}
+                                  className="button button-secondary"
+                                  style={{ padding: '6px 10px', fontSize: 12, gap: 4 }}
+                                  title="Edit Profile Details"
+                                >
+                                  <Edit3 size={13} /> Edit
+                                </button>
+                                <button 
+                                  onClick={() => handlePasswordReset(m)} 
+                                  disabled={recoveryLoading}
+                                  className="button button-secondary"
+                                  style={{ padding: '6px 10px', fontSize: 12, gap: 4 }}
+                                  title="Reset Password"
+                                >
+                                  <KeyRound size={13} /> Reset
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                        {filteredMembers.length === 0 && (
+                          <tr>
+                            <td colSpan={8} style={{ textAlign: 'center', padding: '32px', color: 'var(--text-muted)' }}>
+                              No members found matching the current search / filter criteria.
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {/* ── 2. Mobile & Card View (Adaptive) ── */}
+              {(memberViewMode === 'cards' || memberViewMode === 'auto') && (
+                <div className={`member-cards-grid ${memberViewMode === 'auto' ? 'mobile-cards-container' : ''}`} style={{ display: memberViewMode === 'cards' ? 'grid' : undefined }}>
+                  {filteredMembers.map(m => (
+                    <div key={m.id} className="member-card-item">
+                      <div>
+                        <div className="member-card-top">
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                            <div className="member-card-avatar">
+                              {m.full_name.charAt(0).toUpperCase()}
+                            </div>
+                            <div>
+                              <div style={{ fontWeight: 700, fontSize: 15, color: 'var(--text-primary)' }}>
+                                {m.full_name}
+                              </div>
+                              <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                                Joined {m.created_at}
+                              </div>
+                            </div>
+                          </div>
+                          <span className={`status-badge ${m.role === 'admin' ? 'status-active' : 'status-pending'}`} style={{ fontSize: 10, padding: '2px 8px' }}>
+                            {m.role || 'user'}
+                          </span>
+                        </div>
+
+                        <div className="member-card-details">
+                          <div className="member-card-detail-row">
+                            <Mail size={13} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
+                            <span style={{ fontSize: 12, color: 'var(--text-secondary)', wordBreak: 'break-all' }}>
+                              {m.email}
+                            </span>
+                          </div>
+
+                          {m.phone && (
+                            <div className="member-card-detail-row">
+                              <Phone size={13} style={{ color: '#34d399', flexShrink: 0 }} />
+                              <a 
+                                href={`tel:${m.phone}`}
+                                style={{ fontSize: 12, color: '#34d399', textDecoration: 'none', fontWeight: 600 }}
+                              >
+                                {m.phone}
+                              </a>
+                            </div>
+                          )}
+
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 4, padding: '10px 12px', backgroundColor: 'rgba(255, 255, 255, 0.02)', borderRadius: 10, border: '1px solid var(--border-color)' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                              <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Green Card:</span>
+                              {m.has_green_card ? (
+                                <span className="status-badge status-active" style={{ fontSize: 11, padding: '2px 8px', gap: 4, fontWeight: 700 }}>
+                                  <ShieldCheck size={11} /> Active
+                                </span>
+                              ) : (
+                                <span className="status-badge" style={{ fontSize: 11, padding: '2px 8px', gap: 4, backgroundColor: 'rgba(239, 68, 68, 0.12)', color: '#f87171', border: '1px solid rgba(239, 68, 68, 0.25)', fontWeight: 700 }}>
+                                  <AlertCircle size={11} /> Unpaid
+                                </span>
+                              )}
+                            </div>
+
+                            {m.has_green_card && (
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Member ID:</span>
+                                <span style={{ fontFamily: 'var(--mono)', fontSize: 12, fontWeight: 700, color: 'var(--text-primary)' }}>
+                                  {m.member_id}
+                                </span>
+                              </div>
+                            )}
+
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                              <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Farm Slots:</span>
+                              {m.total_slots > 0 ? (
+                                <span style={{ fontSize: 11, color: '#34d399', fontWeight: 700 }}>
+                                  🌱 {m.total_slots} {m.total_slots === 1 ? 'Slot' : 'Slots'}
+                                </span>
+                              ) : (
+                                <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>0 Slots</span>
+                              )}
+                            </div>
+
+                            {m.total_slots > 0 && (
+                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 2 }}>
+                                {m.slots_by_program.map((prog, idx) => (
+                                  <span key={idx} className={`program-pill ${getProgramPillClass(prog.category)}`} style={{ fontSize: 10, padding: '1px 6px' }}>
+                                    {getProgramEmoji(prog.category)} {prog.category.replace(' Village', '')}: {prog.slots}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+
+                            {m.referral_code && (
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px dashed var(--border-color)', paddingTop: 4, marginTop: 2 }}>
+                                <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>Ref Code: <strong style={{ color: 'var(--text-secondary)' }}>{m.referral_code}</strong></span>
+                                <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>By: <strong style={{ color: 'var(--text-secondary)' }}>{m.referred_by || 'Direct'}</strong></span>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="member-card-actions">
+                        {!m.has_green_card && (
+                          <button 
+                            onClick={() => handleActivateGreenCard(m)}
+                            disabled={activatingMemberId === m.id}
+                            className="button"
+                            style={{ 
+                              flex: '1 1 100%',
+                              padding: '8px 12px', 
+                              fontSize: 12, 
+                              gap: 5,
+                              backgroundColor: 'rgba(16, 185, 129, 0.2)',
+                              color: '#34d399',
+                              border: '1px solid rgba(16, 185, 129, 0.4)',
+                              fontWeight: 700,
+                              justifyContent: 'center'
+                            }}
+                            title="Confirm offline payment (₦1,000) and issue Green Card"
+                          >
+                            <IdCard size={14} /> {activatingMemberId === m.id ? 'Issuing...' : 'Issue Green Card'}
+                          </button>
+                        )}
+                        <button 
+                          onClick={() => startEditingMember(m)}
+                          className="button button-secondary"
+                          style={{ padding: '8px 12px', fontSize: 12, gap: 4, flex: 1, justifyContent: 'center' }}
+                          title="Edit Profile Details"
+                        >
+                          <Edit3 size={13} /> Edit
+                        </button>
+                        <button 
+                          onClick={() => handlePasswordReset(m)} 
+                          disabled={recoveryLoading}
+                          className="button button-secondary"
+                          style={{ padding: '8px 12px', fontSize: 12, gap: 4, flex: 1, justifyContent: 'center' }}
+                          title="Reset Password"
+                        >
+                          <KeyRound size={13} /> Reset
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                  {filteredMembers.length === 0 && (
+                    <div style={{ gridColumn: '1 / -1', padding: '32px', textAlign: 'center', backgroundColor: 'var(--bg-secondary)', borderRadius: 12, border: '1px solid var(--border-color)', color: 'var(--text-muted)' }}>
+                      No members found matching the current search / filter criteria.
+                    </div>
+                  )}
+                </div>
+              )}
 
               {recoveryCredentials && (
                 <div className="table-card" style={{ padding: 24, backgroundColor: 'rgba(245, 158, 11, 0.05)', border: '1px dashed var(--warning-color)' }}>
@@ -1490,6 +2004,50 @@ export default function App() {
                   )}
                 </div>
 
+                {/* Green Card Membership Status & Offline Activation */}
+                <div style={{ 
+                  padding: 14, 
+                  backgroundColor: editingMember.has_green_card ? 'rgba(16, 185, 129, 0.05)' : 'rgba(245, 158, 11, 0.05)', 
+                  borderRadius: 8, 
+                  border: `1px solid ${editingMember.has_green_card ? 'rgba(16, 185, 129, 0.2)' : 'rgba(245, 158, 11, 0.2)'}`,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: 12,
+                  flexWrap: 'wrap'
+                }}>
+                  <div>
+                    <span style={{ fontSize: 13, fontWeight: 700, color: editingMember.has_green_card ? '#10b981' : '#f59e0b', display: 'flex', alignItems: 'center', gap: 6 }}>
+                      {editingMember.has_green_card ? <ShieldCheck size={16} /> : <AlertCircle size={16} />}
+                      {editingMember.has_green_card ? 'Active Green Card Member' : 'Green Card Not Active (Unpaid)'}
+                    </span>
+                    <span style={{ fontSize: 12, color: 'var(--text-secondary)', display: 'block', marginTop: 2 }}>
+                      {editingMember.has_green_card 
+                        ? `Member ID: ${editingMember.member_id}` 
+                        : 'User registered but has not completed Green Card subscription payment.'}
+                    </span>
+                  </div>
+                  {!editingMember.has_green_card && (
+                    <button
+                      type="button"
+                      onClick={() => handleActivateGreenCard(editingMember)}
+                      disabled={activatingMemberId === editingMember.id}
+                      className="button"
+                      style={{ 
+                        padding: '8px 14px', 
+                        fontSize: 12, 
+                        gap: 6,
+                        whiteSpace: 'nowrap',
+                        backgroundColor: 'rgba(16, 185, 129, 0.2)',
+                        color: '#34d399',
+                        border: '1px solid rgba(16, 185, 129, 0.4)'
+                      }}
+                    >
+                      <CreditCard size={14} /> {activatingMemberId === editingMember.id ? 'Activating...' : 'Activate Green Card'}
+                    </button>
+                  )}
+                </div>
+
                 <div>
                   <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 6 }}>
                     Full Name
@@ -1509,6 +2067,28 @@ export default function App() {
                       outline: 'none'
                     }}
                     required
+                  />
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 6 }}>
+                    Email Address
+                  </label>
+                  <input 
+                    type="email"
+                    value={editEmail}
+                    onChange={(e) => setEditEmail(e.target.value)}
+                    placeholder="user@example.com"
+                    style={{
+                      width: '100%',
+                      backgroundColor: 'var(--bg-primary)',
+                      border: '1px solid var(--border-color)',
+                      borderRadius: '8px',
+                      padding: '10px 12px',
+                      color: 'var(--text-primary)',
+                      fontSize: '14px',
+                      outline: 'none'
+                    }}
                   />
                 </div>
 
@@ -1534,7 +2114,7 @@ export default function App() {
                   />
                 </div>
 
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                <div className="form-row-dual">
                   <div>
                     <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 6 }}>
                       Member ID
@@ -1623,6 +2203,206 @@ export default function App() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* ── Issue Green Card Modal ───────────────────────────────────────── */}
+      {isIssueModalOpen && (
+        <div className="modal-overlay" onClick={() => setIsIssueModalOpen(false)}>
+          <div className="modal-card" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 'min(95vw, 540px)' }}>
+            <div className="modal-header">
+              <span className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <IdCard size={20} color="#10b981" /> Issue Green Card to Existing Member
+              </span>
+              <button 
+                onClick={() => setIsIssueModalOpen(false)}
+                style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+              <p style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.5, margin: 0 }}>
+                Select a registered member who has made an offline payment (Cash or Direct Bank Transfer) to assign their official Member ID and activate 1-year Green Card benefits.
+              </p>
+
+              <div>
+                <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 6 }}>
+                  Select Member (Search by Name, Email, Phone, or ID)
+                </label>
+
+                {issueSelectedMember ? (
+                  <div className="selected-member-card">
+                    <div className="selected-member-info" style={{ flexGrow: 1 }}>
+                      <div className="selected-member-avatar">
+                        {issueSelectedMember.full_name.charAt(0).toUpperCase()}
+                      </div>
+                      <div style={{ flexGrow: 1 }}>
+                        <div style={{ fontWeight: 700, fontSize: 14 }}>{issueSelectedMember.full_name}</div>
+                        <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+                          {issueSelectedMember.email} {issueSelectedMember.phone ? `• 📞 ${issueSelectedMember.phone}` : ''}
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4 }}>
+                          <span className={`status-badge ${issueSelectedMember.has_green_card ? 'status-active' : 'status-pending'}`} style={{ fontSize: 11, padding: '2px 6px' }}>
+                            {issueSelectedMember.has_green_card ? 'Already Active' : 'Unpaid / Needs Card'}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                    <button 
+                      type="button" 
+                      onClick={() => {
+                        setIssueSelectedMemberId('');
+                        setIssueMemberSearch('');
+                        setIsIssuePickerOpen(true);
+                      }}
+                      className="button button-secondary"
+                      style={{ padding: '6px 10px', fontSize: 12, gap: 4, marginLeft: 8 }}
+                    >
+                      <X size={13} /> Change
+                    </button>
+                  </div>
+                ) : (
+                  <div className="member-picker-container">
+                    <div className="input-wrapper">
+                      <Search size={16} className="input-icon" />
+                      <input
+                        type="text"
+                        placeholder="Search member by name, email, or phone..."
+                        value={issueMemberSearch}
+                        onChange={(e) => {
+                          setIssueMemberSearch(e.target.value);
+                          setIsIssuePickerOpen(true);
+                        }}
+                        onFocus={() => setIsIssuePickerOpen(true)}
+                        autoFocus
+                      />
+                    </div>
+
+                    {isIssuePickerOpen && (
+                      <div className="member-picker-dropdown">
+                        {searchableIssueMembers.map((m) => (
+                          <div
+                            key={m.id}
+                            className="member-picker-item"
+                            onClick={() => {
+                              setIssueSelectedMemberId(m.id);
+                              setIsIssuePickerOpen(false);
+                              setIssueMemberSearch('');
+                            }}
+                          >
+                            <div>
+                              <div style={{ fontWeight: 600, fontSize: 13, color: 'var(--text-primary)' }}>
+                                {m.full_name}
+                              </div>
+                              <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
+                                {m.email} {m.phone ? `• 📞 ${m.phone}` : ''}
+                              </div>
+                            </div>
+                            <span className={`status-badge ${m.has_green_card ? 'status-active' : 'status-pending'}`} style={{ fontSize: 10, padding: '2px 6px' }}>
+                              {m.has_green_card ? 'Active' : 'Unpaid'}
+                            </span>
+                          </div>
+                        ))}
+                        {searchableIssueMembers.length === 0 && (
+                          <div style={{ padding: 16, textAlign: 'center', fontSize: 12, color: 'var(--text-muted)' }}>
+                            No matching members found.
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {issueSelectedMember && (
+                <div style={{ padding: 14, backgroundColor: 'rgba(16, 185, 129, 0.04)', borderRadius: 8, border: '1px solid rgba(16, 185, 129, 0.2)', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--accent-color)' }}>
+                    Confirmation Summary:
+                  </span>
+                  <div style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+                    • <strong>Member:</strong> {issueSelectedMember.full_name} ({issueSelectedMember.email})<br />
+                    • <strong>Subscription:</strong> 1-Year Agroheal Green Card Membership<br />
+                    • <strong>Offline Fee:</strong> ₦1,000 (Payment Confirmed)<br />
+                    • <strong>Action:</strong> Assigns sequential Member ID & enables community benefits
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="modal-footer">
+              <button 
+                type="button" 
+                onClick={() => setIsIssueModalOpen(false)}
+                className="button button-secondary"
+              >
+                Cancel
+              </button>
+              <button 
+                type="button" 
+                disabled={!issueSelectedMember || (activatingMemberId === issueSelectedMember.id)}
+                onClick={() => issueSelectedMember && handleActivateGreenCard(issueSelectedMember, true)}
+                className="button"
+                style={{ backgroundColor: 'var(--accent-color)', color: '#064e3b', fontWeight: 700 }}
+              >
+                <IdCard size={15} /> {activatingMemberId === issueSelectedMember?.id ? 'Issuing Green Card...' : 'Confirm & Issue Green Card'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Issued Green Card Share / Success Modal ──────────────────────── */}
+      {issuedGreenCardDetails && (
+        <div className="modal-overlay" onClick={() => setIssuedGreenCardDetails(null)}>
+          <div className="modal-card" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 'min(95vw, 500px)', textAlign: 'center' }}>
+            <div className="modal-header" style={{ justifyContent: 'center', position: 'relative' }}>
+              <span className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#10b981' }}>
+                <CheckCircle2 size={22} color="#10b981" /> Green Card Successfully Issued!
+              </span>
+              <button 
+                onClick={() => setIssuedGreenCardDetails(null)}
+                style={{ position: 'absolute', right: 0, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16 }}>
+              <div style={{ padding: 18, backgroundColor: 'rgba(16, 185, 129, 0.08)', borderRadius: 12, border: '1px solid rgba(16, 185, 129, 0.3)', width: '100%', textAlign: 'left', lineHeight: 1.7, fontSize: 13 }}>
+                <div><strong>Member Name:</strong> {issuedGreenCardDetails.member.full_name}</div>
+                <div><strong>Email:</strong> {issuedGreenCardDetails.member.email}</div>
+                <div><strong>Official Member ID:</strong> <span style={{ fontFamily: 'var(--mono)', color: 'var(--accent-color)', fontWeight: 700, fontSize: 14 }}>{issuedGreenCardDetails.memberId}</span></div>
+                <div><strong>Membership Status:</strong> <span style={{ color: '#34d399', fontWeight: 600 }}>Active (1 Year)</span></div>
+              </div>
+
+              <p style={{ fontSize: 13, color: 'var(--text-secondary)', margin: 0 }}>
+                You can copy the confirmation details or forward them directly to the member via WhatsApp.
+              </p>
+
+              <div style={{ display: 'flex', gap: 10, width: '100%' }}>
+                <button 
+                  onClick={() => {
+                    navigator.clipboard.writeText(`Hello ${issuedGreenCardDetails.member.full_name}!\n\nYour Agroheal LEAP Green Card registration and payment have been confirmed.\n\nMember ID: ${issuedGreenCardDetails.memberId}\nEmail: ${issuedGreenCardDetails.member.email}\nStatus: Active (1 Year)\n\nYou can access your dashboard, training, and community slots at: https://www.agroheal.solutions/dashboard`);
+                    setSuccessMessage('Confirmation message copied to clipboard!');
+                    setTimeout(() => setSuccessMessage(''), 3000);
+                  }}
+                  className="button button-secondary" 
+                  style={{ flex: 1, padding: '10px 14px', gap: 6, justifyContent: 'center' }}
+                >
+                  <Copy size={14} /> Copy Message
+                </button>
+                <button 
+                  onClick={() => openWhatsApp(`Hello ${issuedGreenCardDetails.member.full_name}!\n\nYour Agroheal LEAP Green Card registration and payment have been confirmed.\n\nMember ID: ${issuedGreenCardDetails.memberId}\nEmail: ${issuedGreenCardDetails.member.email}\nStatus: Active (1 Year)\n\nYou can access your dashboard, training, and community slots at: https://www.agroheal.solutions/dashboard`)}
+                  className="button button-whatsapp" 
+                  style={{ flex: 1, padding: '10px 14px', gap: 6, justifyContent: 'center' }}
+                >
+                  <MessageCircle size={14} /> Share on WhatsApp
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}

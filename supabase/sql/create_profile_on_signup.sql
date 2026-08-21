@@ -35,15 +35,18 @@ begin
     where referral_code = incoming_ref;
   end if;
 
-  insert into public.profiles (id, full_name, referral_code, referred_by, created_at)
+  insert into public.profiles (id, email, full_name, referral_code, referred_by, created_at)
   values (
     new.id,
+    new.email,
     coalesce(new.raw_user_meta_data->>'full_name', new.email, ''),
     new_code,
     referrer_id,
     now()
   )
-  on conflict (id) do nothing;
+  on conflict (id) do update set
+    email = coalesce(excluded.email, public.profiles.email),
+    full_name = case when public.profiles.full_name is null or public.profiles.full_name = '' then excluded.full_name else public.profiles.full_name end;
 
   return new;
 end;

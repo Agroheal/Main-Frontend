@@ -102,7 +102,9 @@ serve(async (req) => {
       await adminClient
         .from("profiles")
         .update({
+          email: newUser.email || email.trim().toLowerCase(),
           full_name,
+          phone: phone?.trim() || null,
           referred_by: referrerId
         })
         .eq("id", newUser.id);
@@ -250,7 +252,7 @@ serve(async (req) => {
 
     // ── ACTION: update_member ───────────────────────────────────────────────────
     if (action === "update_member") {
-      const { user_id, full_name, phone, member_id, referral_code, role } = payload;
+      const { user_id, full_name, email, phone, member_id, referral_code, role } = payload;
       if (!user_id) {
         return new Response(
           JSON.stringify({ success: false, message: "User ID is required" }),
@@ -260,6 +262,7 @@ serve(async (req) => {
 
       const updatePayload: Record<string, any> = {};
       if (full_name !== undefined) updatePayload.full_name = full_name.trim();
+      if (email !== undefined) updatePayload.email = email.trim().toLowerCase();
       if (phone !== undefined) updatePayload.phone = phone.trim();
       if (member_id !== undefined) updatePayload.member_id = member_id.trim();
       if (referral_code !== undefined) updatePayload.referral_code = referral_code.trim().toUpperCase();
@@ -276,6 +279,93 @@ serve(async (req) => {
         JSON.stringify({
           success: true,
           message: "Member profile updated successfully."
+        }),
+        { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    // ── ACTION: activate_green_card ────────────────────────────────────────────
+    if (action === "activate_green_card") {
+      const { user_id, credit_referrer = true } = payload;
+      if (!user_id) {
+        return new Response(
+          JSON.stringify({ success: false, message: "User ID is required" }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      // 1. Assign / Retrieve Member ID
+      const { data: memberId, error: memberIdErr } = await adminClient.rpc("get_or_create_green_card_member_id", {
+        p_user_id: user_id,
+        p_join_year: new Date().getFullYear()
+      });
+      if (memberIdErr) console.error("Error generating member_id:", memberIdErr);
+
+      // 2. Check if first activation
+      const { data: existingSub } = await adminClient
+        .from("subscriptions")
+        .select("id")
+        .eq("user_id", user_id)
+        .eq("plan", "green_card")
+        .maybeSingle();
+
+      const isFirstActivation = !existingSub;
+
+      // 3. Upsert active Green Card subscription (1 year validity)
+      const oneYearFromNow = new Date();
+      oneYearFromNow.setFullYear(oneYearFromNow.getFullYear() + 1);
+
+      await adminClient.from("subscriptions").delete().eq("user_id", user_id).eq("plan", "green_card");
+      const { error: subErr } = await adminClient.from("subscriptions").insert({
+        user_id,
+        plan: "green_card",
+        status: "active",
+        started_at: new Date().toISOString(),
+        expires_at: oneYearFromNow.toISOString()
+      });
+
+      if (subErr) throw subErr;
+
+      // 4. Log offline payment record
+      const txRef = `ADMIN_GC_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+      await adminClient.from("other_payments").insert({
+        user_id,
+        payment_type: "green_card_offline",
+        amount: 1000,
+        slots: 0,
+        project_category: "Green Card Membership (Admin Offline Activation)",
+        status: "success",
+        transaction_ref: txRef
+      });
+
+      // 5. Credit referral earnings if first activation
+      if (credit_referrer && isFirstActivation) {
+        const { data: profile } = await adminClient
+          .from("profiles")
+          .select("referred_by")
+          .eq("id", user_id)
+          .maybeSingle();
+
+        if (profile?.referred_by) {
+          try {
+            await adminClient.rpc("increment_referral_earnings", {
+              p_referrer_id: profile.referred_by,
+              p_amount: 500
+            });
+          } catch (refErr) {
+            console.error("Referral increment error:", refErr);
+          }
+        }
+      }
+
+      return new Response(
+        JSON.stringify({
+          success: true,
+          message: `Green Card activated successfully. Member ID: ${memberId || "Assigned"}`,
+          data: {
+            member_id: memberId,
+            expires_at: oneYearFromNow.toISOString()
+          }
         }),
         { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
