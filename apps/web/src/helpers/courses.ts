@@ -33,13 +33,19 @@ export const COURSESDATA: Course[] = [
     title: "100-Day Container Garden Challenge",
     description:
       "A practical challenge to grow food in containers with weekly guidance and real impact.",
-    duration: "0h 52m",
+    duration: "1h 32m",
     lessons: [
       {
         id: "0-1",
         title: "Day 1",
         duration: "52:39",
         videoId: "yMSHPl11JHI",
+      },
+      {
+        id: "0-2",
+        title: "Day 2",
+        duration: "39:40",
+        videoId: "Ofnxbj9qtdM",
       },
     ],
     rating: 5.0,
