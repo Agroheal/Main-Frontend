@@ -110,7 +110,12 @@ export function useAdminMembers() {
         };
       });
 
-      setMembers(mappedMembers);
+      const nameById = new Map(mappedMembers.map((m) => [m.id, m.full_name]));
+      const membersWithReferrerNames = mappedMembers.map((m) =>
+        m.referred_by ? { ...m, referred_by: nameById.get(m.referred_by) || "Unknown Referrer" } : m,
+      );
+
+      setMembers(membersWithReferrerNames);
 
       const combinedLogs: PaymentLog[] = [];
 
